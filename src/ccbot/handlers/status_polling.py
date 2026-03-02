@@ -98,14 +98,9 @@ _probe_failures: dict[str, int] = {}
 _TYPING_INTERVAL = 4.0
 _last_typing_sent: dict[tuple[int, int], float] = {}
 
-# Idle status auto-clear: show "✓ Ready" briefly, then delete the message.
-_IDLE_CLEAR_DELAY = 10.0  # seconds to display idle status before clearing
+# Idle status is intentionally persistent (no auto-clear).
+# Keep timer state/functions only for backward compatibility with tests/callers.
 _idle_clear_timers: dict[tuple[int, int], tuple[str, float]] = {}
-# (user_id, thread_id) -> (window_id, monotonic_time_entered_idle)
-
-# Windows whose idle status has been cleared (prevents re-showing "✓ Ready"
-# on every poll cycle until the window becomes active again).
-_idle_status_cleared: set[str] = set()
 
 # Transcript activity heuristic: if transcript was written to within this many
 # seconds, treat the window as active even without a terminal status signal.
@@ -219,14 +214,12 @@ def clear_seen_status(window_id: str) -> None:
     """Clear startup status tracking for a window (called on cleanup)."""
     _has_seen_status.discard(window_id)
     _startup_times.pop(window_id, None)
-    _idle_status_cleared.discard(window_id)
 
 
 def reset_seen_status_state() -> None:
     """Reset all startup status tracking (for testing)."""
     _has_seen_status.clear()
     _startup_times.clear()
-    _idle_status_cleared.clear()
 
 
 def reset_typing_state() -> None:
@@ -235,14 +228,9 @@ def reset_typing_state() -> None:
 
 
 def _start_idle_clear_timer(user_id: int, thread_id: int, window_id: str) -> None:
-    """Start a timer to auto-clear the idle status message after a delay.
-
-    Does not overwrite an existing timer — the countdown starts on the first
-    idle transition and is not reset by subsequent poll cycles.
-    """
-    key = (user_id, thread_id)
-    if key not in _idle_clear_timers:
-        _idle_clear_timers[key] = (window_id, time.monotonic())
+    """No-op: idle status auto-clear is disabled to keep controls persistent."""
+    del user_id, thread_id, window_id
+    return
 
 
 def _cancel_idle_clear_timer(user_id: int, thread_id: int) -> None:
@@ -258,22 +246,12 @@ def clear_idle_clear_timer(user_id: int, thread_id: int) -> None:
 def reset_idle_clear_state() -> None:
     """Reset all idle clear timers (for testing)."""
     _idle_clear_timers.clear()
-    _idle_status_cleared.clear()
 
 
 async def _check_idle_clear_timers(bot: Bot) -> None:
-    """Clear idle status messages whose display time has expired."""
-    if not _idle_clear_timers:
-        return
-    now = time.monotonic()
-    expired: list[tuple[int, int, str]] = []
-    for (user_id, thread_id), (window_id, entered_at) in _idle_clear_timers.items():
-        if now - entered_at >= _IDLE_CLEAR_DELAY:
-            expired.append((user_id, thread_id, window_id))
-    for user_id, thread_id, window_id in expired:
-        _idle_clear_timers.pop((user_id, thread_id), None)
-        _idle_status_cleared.add(window_id)
-        await enqueue_status_update(bot, user_id, window_id, None, thread_id=thread_id)
+    """No-op: idle status auto-clear is disabled to keep controls persistent."""
+    del bot
+    return
 
 
 def _start_autoclose_timer(
@@ -395,7 +373,6 @@ def _check_transcript_activity(window_id: str, now: float) -> bool:
     if last_activity and (now - last_activity) < _ACTIVITY_THRESHOLD:
         _has_seen_status.add(window_id)
         _startup_times.pop(window_id, None)
-        _idle_status_cleared.discard(window_id)
         return True
     return False
 
@@ -414,16 +391,12 @@ async def _transition_to_idle(
     await update_topic_emoji(bot, chat_id, thread_id, "idle", display)
     _clear_autoclose_if_active(user_id, thread_id)
     _last_typing_sent.pop((user_id, thread_id), None)
-    if window_id in _idle_status_cleared:
-        # Already cleared idle status — don't re-show until active again
-        return
     if notif_mode not in ("muted", "errors_only"):
         from .callback_data import IDLE_STATUS_TEXT
 
         await enqueue_status_update(
             bot, user_id, window_id, IDLE_STATUS_TEXT, thread_id=thread_id
         )
-        _start_idle_clear_timer(user_id, thread_id, window_id)
     else:
         # Muted windows: clear any lingering status message
         await enqueue_status_update(bot, user_id, window_id, None, thread_id=thread_id)
@@ -698,7 +671,6 @@ async def update_status_message(
     if status_line:
         _has_seen_status.add(window_id)
         _startup_times.pop(window_id, None)
-        _idle_status_cleared.discard(window_id)
         await _send_typing_throttled(bot, user_id, thread_id)
         if thread_id is not None:
             _cancel_idle_clear_timer(user_id, thread_id)

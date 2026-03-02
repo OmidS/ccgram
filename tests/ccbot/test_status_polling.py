@@ -19,7 +19,6 @@ from ccbot.handlers.status_polling import (
     _clear_autoclose_if_active,
     _has_seen_status,
     _idle_clear_timers,
-    _idle_status_cleared,
     _MAX_PROBE_FAILURES,
     _probe_failures,
     _probe_topic_existence,
@@ -477,20 +476,9 @@ class TestPyteFallbackInUpdateStatus:
 
 
 class TestIdleClearTimers:
-    def test_start_timer(self) -> None:
-        with patch("ccbot.handlers.status_polling.time") as mock_time:
-            mock_time.monotonic.return_value = 500.0
-            _start_idle_clear_timer(1, 42, "@0")
-        assert (1, 42) in _idle_clear_timers
-        assert _idle_clear_timers[(1, 42)] == ("@0", 500.0)
-
-    def test_start_timer_does_not_overwrite_existing(self) -> None:
-        with patch("ccbot.handlers.status_polling.time") as mock_time:
-            mock_time.monotonic.return_value = 500.0
-            _start_idle_clear_timer(1, 42, "@0")
-            mock_time.monotonic.return_value = 600.0
-            _start_idle_clear_timer(1, 42, "@0")
-        assert _idle_clear_timers[(1, 42)] == ("@0", 500.0)
+    def test_start_timer_is_noop(self) -> None:
+        _start_idle_clear_timer(1, 42, "@0")
+        assert (1, 42) not in _idle_clear_timers
 
     def test_cancel_timer(self) -> None:
         _idle_clear_timers[(1, 42)] = ("@0", 500.0)
@@ -500,35 +488,12 @@ class TestIdleClearTimers:
     def test_cancel_nonexistent_is_noop(self) -> None:
         _cancel_idle_clear_timer(1, 42)
 
-    async def test_check_expired_enqueues_clear(self) -> None:
-        from ccbot.handlers.status_polling import _IDLE_CLEAR_DELAY
-
+    async def test_check_timers_is_noop(self) -> None:
         _idle_clear_timers[(1, 42)] = ("@0", 0.0)
         bot = AsyncMock()
-        with (
-            patch("ccbot.handlers.status_polling.time") as mock_time,
-            patch(
-                "ccbot.handlers.status_polling.enqueue_status_update"
-            ) as mock_enqueue,
-        ):
-            mock_time.monotonic.return_value = _IDLE_CLEAR_DELAY + 1.0
-            await _check_idle_clear_timers(bot)
-        mock_enqueue.assert_called_once_with(bot, 1, "@0", None, thread_id=42)
-        assert (1, 42) not in _idle_clear_timers
-        assert "@0" in _idle_status_cleared
-
-    async def test_check_not_expired_yet(self) -> None:
-        from ccbot.handlers.status_polling import _IDLE_CLEAR_DELAY
-
-        _idle_clear_timers[(1, 42)] = ("@0", 0.0)
-        bot = AsyncMock()
-        with (
-            patch("ccbot.handlers.status_polling.time") as mock_time,
-            patch(
-                "ccbot.handlers.status_polling.enqueue_status_update"
-            ) as mock_enqueue,
-        ):
-            mock_time.monotonic.return_value = _IDLE_CLEAR_DELAY - 1.0
+        with patch(
+            "ccbot.handlers.status_polling.enqueue_status_update"
+        ) as mock_enqueue:
             await _check_idle_clear_timers(bot)
         mock_enqueue.assert_not_called()
         assert (1, 42) in _idle_clear_timers
@@ -543,20 +508,18 @@ class TestIdleClearTimers:
 
 
 class TestClearSeenStatus:
-    def test_clears_idle_status_cleared(self) -> None:
+    def test_clears_seen_status_and_startup(self) -> None:
         from ccbot.handlers.status_polling import clear_seen_status
 
-        _idle_status_cleared.add("@0")
         _has_seen_status.add("@0")
         _startup_times["@0"] = 100.0
         clear_seen_status("@0")
-        assert "@0" not in _idle_status_cleared
         assert "@0" not in _has_seen_status
         assert "@0" not in _startup_times
 
 
 class TestTransitionToIdle:
-    async def test_starts_idle_clear_timer_and_sends_idle_text(self) -> None:
+    async def test_sends_idle_text(self) -> None:
         from ccbot.handlers.callback_data import IDLE_STATUS_TEXT
         from ccbot.handlers.status_polling import _transition_to_idle
 
@@ -573,22 +536,6 @@ class TestTransitionToIdle:
         mock_enqueue.assert_called_once()
         assert mock_enqueue.call_args[0][3] == IDLE_STATUS_TEXT
         assert mock_enqueue.call_args[1]["thread_id"] == 42
-        assert (1, 42) in _idle_clear_timers
-
-    async def test_skips_when_already_cleared(self) -> None:
-        from ccbot.handlers.status_polling import _transition_to_idle
-
-        _idle_status_cleared.add("@0")
-        bot = AsyncMock()
-        with (
-            patch("ccbot.handlers.status_polling.update_topic_emoji"),
-            patch(
-                "ccbot.handlers.status_polling.enqueue_status_update"
-            ) as mock_enqueue,
-        ):
-            await _transition_to_idle(bot, 1, "@0", 42, -100, "project", "normal")
-        mock_enqueue.assert_not_called()
-        assert (1, 42) not in _idle_clear_timers
 
     @pytest.mark.parametrize("mode", ["muted", "errors_only"])
     async def test_suppressed_mode_clears_status_no_timer(self, mode: str) -> None:
@@ -660,7 +607,6 @@ class TestActiveStatusCancelsIdleTimer:
         from ccbot.handlers.status_polling import update_status_message
 
         _idle_clear_timers[(1, 42)] = ("@0", 500.0)
-        _idle_status_cleared.add("@0")
 
         pyte_status = StatusUpdate(
             raw_text="Working on task",
@@ -698,7 +644,6 @@ class TestActiveStatusCancelsIdleTimer:
             await update_status_message(bot, 1, "@0", thread_id=42)
 
         assert (1, 42) not in _idle_clear_timers
-        assert "@0" not in _idle_status_cleared
 
     async def test_transcript_activity_cancels_idle_timer(self) -> None:
         from ccbot.handlers.status_polling import _handle_no_status
