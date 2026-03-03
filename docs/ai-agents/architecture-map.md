@@ -21,6 +21,7 @@
 4. Provider abstraction
 
 - `src/ccbot/providers/base.py` defines the provider contract.
+  - `discover_transcript(cwd, window_key, *, max_age=None)` is the hookless discovery contract (used by Codex/Gemini; `max_age=0` disables staleness checks for alive panes).
 - `src/ccbot/providers/__init__.py` resolves per-window provider selection.
 - `src/ccbot/providers/{claude,codex,gemini}.py` implement provider-specific behavior.
 - `src/ccbot/command_catalog.py` discovers provider commands from filesystem (skills, custom commands) with 60s TTL caching.
@@ -78,6 +79,7 @@ Provider transcript sources (read-only):
 - Claude: `~/.claude/projects/`
 - Codex: `~/.codex/sessions/`
 - Gemini: `~/.gemini/tmp/`
+  - Gemini discovery matches by `projectHash` (or configured project alias dir) and does not full-scan unrelated project dirs.
 
 ## Core Flow
 

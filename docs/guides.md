@@ -176,7 +176,7 @@ CCBot supports multiple agent CLI backends. Each Telegram topic can use a differ
 - `✅ Standard` (normal approvals)
 - `🚀 YOLO` (provider-specific permissive mode)
 
-**From the terminal**: If you create a tmux window manually and start an agent CLI, CCBot auto-detects the provider from the running process name.
+**From the terminal**: If you create a tmux window manually and start an agent CLI, CCBot auto-detects the provider from the running process name. For Gemini sessions launched via bun/node wrappers, it also checks Gemini pane-title symbols (`✦`, `✋`, `◇`).
 
 **Default provider**: Set `CCBOT_PROVIDER=codex` (or `gemini`) to change the default. Claude is the default if unset.
 
@@ -196,7 +196,7 @@ YOLO sessions are indicated in Telegram topic titles with a positive `🚀` badg
 
 **Claude Code** has the richest integration — 7 hook event types (SessionStart, Notification, Stop, SubagentStart, SubagentStop, TeammateIdle, TaskCompleted) provide instant session tracking, interactive UI detection, done/idle detection, subagent activity monitoring, and agent team notifications. The bot also uses a pyte VT100 screen buffer as fallback for terminal status parsing. Multi-pane windows (e.g. from agent teams) are automatically scanned for blocked panes and surfaced as inline keyboard alerts.
 
-**Codex CLI** and **Gemini CLI** lack a session hook, so session tracking relies on auto-detection from running processes. Codex interactive prompts (question lists, permission prompts, and other selection UIs) are detected from terminal screen content via pyte and shown with inline keyboard controls. For edit-approval prompts, CCBot reformats dense terminal diffs into a compact summary with a short preview while keeping the Yes/No confirmation choices and bottom action hints intact. Gemini sets pane titles (`Working: ✦`, `Action Required: ✋`, `Ready: ◇`) that CCBot reads for status, and its `@inquirer/select` permission prompts are detected as interactive UI.
+**Codex CLI** and **Gemini CLI** lack a session hook, so session tracking relies on hookless transcript discovery plus provider detection. Codex interactive prompts (question lists, permission prompts, and other selection UIs) are detected from terminal screen content via pyte and shown with inline keyboard controls. For edit-approval prompts, CCBot reformats dense terminal diffs into a compact summary with a short preview while keeping the Yes/No confirmation choices and bottom action hints intact. Gemini sets pane titles (`Working: ✦`, `Action Required: ✋`, `Ready: ◇`) that CCBot reads for status, and its `@inquirer/select` permission prompts are detected as interactive UI. Gemini transcript discovery matches project hash/alias only (no cross-project full scan) to avoid wrong-session attachment.
 
 ### Codex Edit Approval Formatting
 

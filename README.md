@@ -90,7 +90,7 @@ Each Telegram Forum topic binds to one tmux window running an agent CLI. Message
 
 - Claude Code (default), OpenAI Codex CLI, and Google Gemini CLI
 - Per-topic provider selection — different topics can use different agents simultaneously
-- Auto-detects provider from externally created tmux windows
+- Auto-detects provider from externally created tmux windows (process name, with Gemini bun/node wrapper fallback via Gemini pane-title symbols)
 - Provider-aware recovery (Continue/Resume buttons adapt to each provider's capabilities)
 
 **Extensibility**
@@ -138,7 +138,7 @@ ALLOWED_USERS=your_telegram_user_id
 ccbot hook --install
 ```
 
-This registers 7 Claude Code hooks (SessionStart, Notification, Stop, SubagentStart, SubagentStop, TeammateIdle, TaskCompleted) for automatic session tracking, instant interactive UI detection, real-time status updates, and agent team notifications. Not needed for Codex or Gemini — those providers are auto-detected from running processes.
+This registers 7 Claude Code hooks (SessionStart, Notification, Stop, SubagentStart, SubagentStop, TeammateIdle, TaskCompleted) for automatic session tracking, instant interactive UI detection, real-time status updates, and agent team notifications. Not needed for Codex or Gemini — those providers are discovered from hookless transcripts and tmux window/provider detection.
 
 > If hooks are missing, ccbot warns at startup with the fix command. Hooks are optional — terminal scraping works as fallback.
 

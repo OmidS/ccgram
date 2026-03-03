@@ -8,6 +8,11 @@ Add a new provider:
 2. Register provider in `src/ccbot/providers/__init__.py`.
 3. Define capabilities accurately (resume/continue/hook/status behavior).
 4. Add provider tests in `tests/ccbot/test_provider_contracts.py` and provider-specific tests.
+5. If you change provider contract signatures (for example `discover_transcript(..., max_age=...)`), update:
+   - `src/ccbot/providers/base.py` protocol
+   - shared base implementations (`_jsonl.py`, Claude/Codex/Gemini as needed)
+   - call sites (status polling/session monitor)
+   - contract + behavior tests
 
 Add a new Telegram command or callback:
 
