@@ -61,7 +61,10 @@ Each Telegram Forum topic binds to one tmux window running an agent CLI. Message
 
 **Session control**
 
-- Send messages and `/commands` directly to your agent (`/clear`, `/compact`, `/cost`, etc.)
+- Send messages directly to your agent topic
+- `/commands` shows commands supported by that topic's provider (Claude/Codex/Gemini)
+- Forwarded slash commands report provider mismatch errors (for example Claude-only `/cost` in Codex)
+- Command menu auto-switches per user/chat to the active topic provider after interaction
 - Interactive prompts (AskUserQuestion, ExitPlanMode, Permission) rendered as inline keyboards
 - Codex edit approvals are reformatted for Telegram readability (compact summary + short preview, with approval choices preserved)
 - Codex `/status` replies include a bot-side transcript snapshot (session + token/rate-limit stats) when Codex does not emit a normal transcript message
@@ -92,7 +95,7 @@ Each Telegram Forum topic binds to one tmux window running an agent CLI. Message
 
 **Extensibility**
 
-- Auto-discovers agent skills and custom commands into the Telegram menu
+- Global Telegram menu includes bot commands + default provider commands (with `↗` prefix); provider-scoped menus auto-refresh per chat/user/topic context with Telegram-scope fallbacks
 - Multi-instance support — run separate bots per Telegram group on the same machine
 - Configurable via environment variables
 
