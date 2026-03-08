@@ -127,10 +127,7 @@ def detect_provider_from_command(pane_current_command: str) -> str:
 def _provider_needs_pane_title(
     provider: AgentProvider, pane_current_command: str
 ) -> bool:
-    checker = getattr(provider, "requires_pane_title_for_detection", None)
-    if not callable(checker):
-        return False
-    return bool(checker(pane_current_command))
+    return provider.requires_pane_title_for_detection(pane_current_command)
 
 
 def _provider_matches_pane_title(
@@ -138,10 +135,7 @@ def _provider_matches_pane_title(
     pane_current_command: str,
     pane_title: str,
 ) -> bool:
-    checker = getattr(provider, "detect_from_pane_title", None)
-    if not callable(checker):
-        return False
-    return bool(checker(pane_current_command, pane_title))
+    return provider.detect_from_pane_title(pane_current_command, pane_title)
 
 
 def should_probe_pane_title_for_provider_detection(pane_current_command: str) -> bool:

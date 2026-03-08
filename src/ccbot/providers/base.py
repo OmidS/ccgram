@@ -239,6 +239,16 @@ class AgentProvider(Protocol):
         """
         ...
 
+    def requires_pane_title_for_detection(self, pane_current_command: str) -> bool:
+        """Whether provider detection requires pane title for given command."""
+        ...
+
+    def detect_from_pane_title(
+        self, pane_current_command: str, pane_title: str
+    ) -> bool:
+        """Detect this provider from tmux pane title."""
+        ...
+
     def discover_commands(self, base_dir: str) -> list[DiscoveredCommand]:
         """Discover provider-native commands.
 

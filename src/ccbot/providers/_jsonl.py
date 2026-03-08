@@ -212,6 +212,19 @@ class JsonlProvider:
     def parse_history_entry(self, entry: dict[str, Any]) -> AgentMessage | None:
         return parse_jsonl_history_entry(entry)
 
+    def requires_pane_title_for_detection(
+        self,
+        pane_current_command: str,  # noqa: ARG002 — protocol signature
+    ) -> bool:
+        return False
+
+    def detect_from_pane_title(
+        self,
+        pane_current_command: str,  # noqa: ARG002 — protocol signature
+        pane_title: str,  # noqa: ARG002 — protocol signature
+    ) -> bool:
+        return False
+
     def discover_transcript(
         self,
         cwd: str,  # noqa: ARG002 — protocol signature
