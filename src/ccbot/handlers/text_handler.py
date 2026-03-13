@@ -201,6 +201,8 @@ async def _handle_unbound_topic(
         return False
 
     all_windows = await tmux_manager.list_windows()
+    emdash_windows = await tmux_manager.discover_emdash_sessions()
+    all_windows.extend(emdash_windows)
     bound_ids = {
         bound_wid for _, _, bound_wid in session_manager.iter_thread_bindings()
     }

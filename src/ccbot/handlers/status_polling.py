@@ -49,6 +49,7 @@ from ..providers import (
 )
 from ..providers.base import StatusUpdate
 from ..session import session_manager
+from ..window_resolver import is_foreign_window
 from ..session_monitor import get_active_monitor
 from ..tmux_manager import tmux_manager
 from ..utils import log_throttle_sweep, log_throttled
@@ -950,7 +951,11 @@ async def _maybe_discover_transcript(
     # Disable staleness check if pane process is alive
     pane_alive = w is not None and not is_shell_prompt(w.pane_current_command)
 
-    window_key = f"{config.tmux_session_name}:{window_id}"
+    # Foreign windows (emdash) are already fully qualified — no prefix needed
+    if is_foreign_window(window_id):
+        window_key = window_id
+    else:
+        window_key = f"{config.tmux_session_name}:{window_id}"
     for provider_name, provider in providers_to_try:
         # Active panes may have stale transcript mtimes (no recent writes yet);
         # bypass staleness checks for better hookless session recovery.
@@ -996,6 +1001,8 @@ async def status_poll_loop(bot: Bot) -> None:
             # Fetch all windows once per cycle — O(1) lookup replaces
             # per-binding find_window_by_id calls (O(N×M) → O(N+M)).
             all_windows = await tmux_manager.list_windows()
+            emdash_windows = await tmux_manager.discover_emdash_sessions()
+            all_windows.extend(emdash_windows)
             window_lookup: dict[str, TmuxWindow] = {w.window_id: w for w in all_windows}
 
             # Periodic topic existence probe + stale state cleanup

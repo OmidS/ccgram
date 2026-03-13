@@ -8,6 +8,7 @@ from ccbot.handlers.sessions_dashboard import (
     handle_sessions_kill,
     handle_sessions_kill_confirm,
 )
+from ccbot.session import WindowState
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +22,7 @@ def _patch_deps():
         ) as mock_clear,
     ):
         mock_sm.get_display_name.side_effect = lambda wid: wid
+        mock_sm.get_window_state.side_effect = lambda wid: WindowState()
         mock_sm.get_all_thread_windows.return_value = {}
         mock_tm.list_windows = AsyncMock(return_value=[])
         yield mock_sm, mock_tm, mock_clear

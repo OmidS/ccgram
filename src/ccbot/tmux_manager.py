@@ -25,6 +25,7 @@ import libtmux
 from libtmux.exc import LibTmuxException
 
 from .config import config
+from .window_resolver import EMDASH_SESSION_PREFIX as _EMDASH_PREFIX, is_foreign_window
 
 logger = structlog.get_logger()
 
@@ -69,6 +70,8 @@ _TmuxError = (
     subprocess.CalledProcessError,
 )
 
+_EMDASH_DISCOVERY_TTL = 10.0  # seconds — cache emdash session discovery
+
 
 @dataclass
 class PaneInfo:
@@ -104,6 +107,8 @@ class TmuxManager:
         """
         self.session_name = session_name or config.tmux_session_name
         self._server: libtmux.Server | None = None
+        self._emdash_cache: list[TmuxWindow] = []
+        self._emdash_cache_expires: float = 0.0
 
     @property
     def server(self) -> libtmux.Server:
@@ -205,16 +210,54 @@ class TmuxManager:
     async def find_window_by_id(self, window_id: str) -> TmuxWindow | None:
         """Find a window by its tmux window ID (e.g. '@0', '@12').
 
+        Supports foreign windows (e.g. 'emdash-claude-main-xxx:@0') by
+        querying the foreign tmux session directly.
+
         Args:
             window_id: The tmux window ID to match
 
         Returns:
             TmuxWindow if found, None otherwise
         """
+        if is_foreign_window(window_id):
+            return await self._find_foreign_window(window_id)
         windows = await self.list_windows()
         for window in windows:
             if window.window_id == window_id:
                 return window
+        return None
+
+    async def _find_foreign_window(self, qualified_id: str) -> TmuxWindow | None:
+        """Check if a foreign tmux window exists and return TmuxWindow."""
+        session_name, window_id_part = qualified_id.rsplit(":", 1)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "tmux",
+                "list-windows",
+                "-t",
+                session_name,
+                "-F",
+                "#{window_id}\t#{pane_current_path}\t#{pane_current_command}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            async with asyncio.timeout(5.0):
+                stdout, _ = await proc.communicate()
+        except TimeoutError, OSError:
+            return None
+        if proc.returncode != 0:
+            return None
+        for line in stdout.decode().strip().split("\n"):
+            parts = line.split("\t", 2)
+            if parts and parts[0] == window_id_part:
+                cwd = parts[1] if len(parts) > 1 else ""
+                cmd = parts[2] if len(parts) > 2 else ""  # noqa: PLR2004
+                return TmuxWindow(
+                    window_id=qualified_id,
+                    window_name=session_name.removeprefix(_EMDASH_PREFIX),
+                    cwd=cwd,
+                    pane_current_command=cmd,
+                )
         return None
 
     async def capture_pane(self, window_id: str, with_ansi: bool = False) -> str | None:
@@ -359,7 +402,12 @@ class TmuxManager:
             return ""
 
     async def _capture_pane_plain(self, window_id: str) -> str | None:
-        """Capture pane as plain text via libtmux."""
+        """Capture pane as plain text via libtmux.
+
+        Foreign windows (emdash) are captured via subprocess instead.
+        """
+        if is_foreign_window(window_id):
+            return await self._capture_pane_ansi(window_id)
 
         def _sync_capture() -> str | None:
             session = self.get_session()
@@ -386,7 +434,14 @@ class TmuxManager:
     def _pane_send(
         self, window_id: str, chars: str, *, enter: bool, literal: bool
     ) -> bool:
-        """Synchronous helper: send keys to the active pane of a window."""
+        """Synchronous helper: send keys to the active pane of a window.
+
+        Foreign windows (emdash) are handled via tmux subprocess.
+        """
+        if is_foreign_window(window_id):
+            return self._pane_send_subprocess(
+                window_id, chars, enter=enter, literal=literal
+            )
         session = self.get_session()
         if not session:
             logger.warning("No tmux session found")
@@ -404,6 +459,27 @@ class TmuxManager:
             return True
         except _TmuxError:
             logger.exception("Failed to send keys to window %s", window_id)
+            return False
+
+    def _pane_send_subprocess(
+        self, target: str, chars: str, *, enter: bool, literal: bool
+    ) -> bool:
+        """Send keys via tmux subprocess (for foreign sessions)."""
+        try:
+            cmd = ["tmux", "send-keys", "-t", target]
+            if literal:
+                cmd.append("-l")
+            cmd.append(chars)
+            subprocess.run(cmd, timeout=5, check=False)
+            if enter:
+                subprocess.run(
+                    ["tmux", "send-keys", "-t", target, "Enter"],
+                    timeout=5,
+                    check=False,
+                )
+            return True
+        except subprocess.TimeoutExpired, OSError:
+            logger.exception("Failed to send keys to foreign window %s", target)
             return False
 
     async def _ensure_vim_insert_mode(self, window_id: str) -> None:
@@ -525,7 +601,13 @@ class TmuxManager:
         )
 
     async def kill_window(self, window_id: str) -> bool:
-        """Kill a tmux window by its ID."""
+        """Kill a tmux window by its ID.
+
+        Foreign windows (emdash) are never killed — they are owned externally.
+        """
+        if is_foreign_window(window_id):
+            logger.info("Skipping kill for external window %s", window_id)
+            return False
 
         def _sync_kill() -> bool:
             session = self.get_session()
@@ -543,6 +625,48 @@ class TmuxManager:
                 return False
 
         return await asyncio.to_thread(_sync_kill)
+
+    async def discover_emdash_sessions(self) -> list[TmuxWindow]:
+        """Discover emdash tmux sessions and return as TmuxWindow list.
+
+        Each emdash task runs in its own tmux session named
+        "emdash-{provider}-{kind}-{id}". Returns one TmuxWindow per session
+        with qualified window_id (e.g. "emdash-claude-main-abc123:@0").
+
+        Results are cached for _EMDASH_DISCOVERY_TTL seconds to avoid
+        spawning N+1 subprocesses on every 1-second poll cycle.
+        """
+        now = asyncio.get_event_loop().time()
+        if now < self._emdash_cache_expires:
+            return list(self._emdash_cache)
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "tmux",
+                "list-sessions",
+                "-F",
+                "#{session_name}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            async with asyncio.timeout(5.0):
+                stdout, _ = await proc.communicate()
+        except TimeoutError, OSError:
+            return []
+        if proc.returncode != 0:
+            return []
+
+        results: list[TmuxWindow] = []
+        for session_name in stdout.decode().strip().split("\n"):
+            if not session_name.startswith(_EMDASH_PREFIX):
+                continue
+            w = await self._find_foreign_window(f"{session_name}:@0")
+            if w:
+                results.append(w)
+
+        self._emdash_cache = results
+        self._emdash_cache_expires = now + _EMDASH_DISCOVERY_TTL
+        return list(results)
 
     async def rename_window(self, window_id: str, new_name: str) -> bool:
         """Rename a tmux window by its ID. Returns True on success."""

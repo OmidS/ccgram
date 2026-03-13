@@ -37,7 +37,7 @@ from .providers import get_provider_for_window
 from .state_persistence import StatePersistence
 from .tmux_manager import tmux_manager
 from .utils import atomic_write_json
-from .window_resolver import is_window_id
+from .window_resolver import EMDASH_SESSION_PREFIX, is_foreign_window, is_window_id
 
 logger = structlog.get_logger()
 
@@ -70,6 +70,18 @@ def parse_session_map(raw: dict[str, Any], prefix: str) -> dict[str, dict[str, s
     return result
 
 
+def parse_emdash_provider(session_name: str) -> str:
+    """Extract provider name from emdash session name.
+
+    Format: emdash-{provider}-main-{id} or emdash-{provider}-chat-{id}
+    """
+    for sep in ("-main-", "-chat-"):
+        if sep in session_name:
+            prefix = session_name.split(sep)[0]
+            return prefix.removeprefix(EMDASH_SESSION_PREFIX)
+    return ""
+
+
 @dataclass
 class WindowState:
     """Persistent state for a tmux window.
@@ -81,6 +93,7 @@ class WindowState:
         transcript_path: Direct path to JSONL transcript file (from hook payload)
         notification_mode: "all" | "errors_only" | "muted"
         approval_mode: "normal" | "yolo"
+        external: True for windows owned by external tools (emdash) — never killed by ccbot
     """
 
     session_id: str = ""
@@ -90,6 +103,7 @@ class WindowState:
     notification_mode: str = "all"
     provider_name: str = ""
     approval_mode: str = DEFAULT_APPROVAL_MODE
+    external: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -106,6 +120,8 @@ class WindowState:
             d["provider_name"] = self.provider_name
         if self.approval_mode != DEFAULT_APPROVAL_MODE:
             d["approval_mode"] = self.approval_mode
+        if self.external:
+            d["external"] = True
         return d
 
     @classmethod
@@ -118,6 +134,7 @@ class WindowState:
             notification_mode=data.get("notification_mode", "all"),
             provider_name=data.get("provider_name", ""),
             approval_mode=data.get("approval_mode", DEFAULT_APPROVAL_MODE),
+            external=data.get("external", False),
         )
 
 
@@ -281,15 +298,16 @@ class SessionManager:
                             )
 
         # Detect old format: keys that don't look like window IDs
+        # Foreign windows (emdash) use qualified IDs — not old format.
         needs_migration = False
         for k in self.window_states:
-            if not self._is_window_id(k):
+            if not self._is_window_id(k) and not is_foreign_window(k):
                 needs_migration = True
                 break
         if not needs_migration:
             for bindings in self.thread_bindings.values():
                 for wid in bindings.values():
-                    if not self._is_window_id(wid):
+                    if not self._is_window_id(wid) and not is_foreign_window(wid):
                         needs_migration = True
                         break
                 if needs_migration:
@@ -510,7 +528,11 @@ class SessionManager:
             self._save_state()
 
     def _get_session_map_window_ids(self) -> set[str]:
-        """Read session_map.json and return window IDs for our tmux session."""
+        """Read session_map.json and return window IDs tracked by ccbot.
+
+        Includes native windows (stripped to @id) and emdash windows
+        (full qualified key like "emdash-claude-main-xxx:@0").
+        """
         if not config.session_map_file.exists():
             return set()
         try:
@@ -524,6 +546,8 @@ class SessionManager:
                 wid = key[len(prefix) :]
                 if self._is_window_id(wid):
                     result.add(wid)
+            elif key.startswith(EMDASH_SESSION_PREFIX):
+                result.add(key)
         return result
 
     def audit_state(
@@ -705,11 +729,64 @@ class SessionManager:
         self._save_state()
         return True
 
+    def _sync_window_from_session_map(
+        self,
+        window_id: str,
+        info: dict[str, Any],
+        *,
+        mark_external: bool = False,
+    ) -> bool:
+        """Sync a single window's state from session_map entry.
+
+        Returns True if any state was changed.
+        """
+        new_sid = info.get("session_id", "")
+        if not new_sid:
+            return False
+        new_cwd = info.get("cwd", "")
+        new_wname = info.get("window_name", "")
+        new_transcript = info.get("transcript_path", "")
+        changed = False
+
+        state = self.get_window_state(window_id)
+        if mark_external and not state.external:
+            state.external = True
+            changed = True
+        if state.session_id != new_sid or state.cwd != new_cwd:
+            logger.info(
+                "Session map: window_id %s updated sid=%s, cwd=%s",
+                window_id,
+                new_sid,
+                new_cwd,
+            )
+            state.session_id = new_sid
+            state.cwd = new_cwd
+            changed = True
+        if new_transcript and state.transcript_path != new_transcript:
+            state.transcript_path = new_transcript
+            changed = True
+        # Sync provider_name from session_map (hook data is authoritative).
+        new_provider = info.get("provider_name", "")
+        if new_provider and state.provider_name != new_provider:
+            state.provider_name = new_provider
+            changed = True
+        # Initialize display name from session_map only when unknown.
+        if (
+            new_wname
+            and not self.window_display_names.get(window_id)
+            and not state.window_name
+        ):
+            state.window_name = new_wname
+            self.window_display_names[window_id] = new_wname
+            changed = True
+        return changed
+
     async def load_session_map(self) -> None:
         """Read session_map.json and update window_states with new session associations.
 
         Keys in session_map are formatted as "tmux_session:window_id" (e.g. "ccbot:@12").
-        Only entries matching our tmux_session_name are processed.
+        Native entries (matching our tmux_session_name) and emdash entries (prefixed
+        with "emdash-") are both processed. Emdash windows are marked as external.
         Also cleans up window_states entries not in current session_map.
         Updates window_display_names from the "window_name" field in values.
         """
@@ -731,7 +808,26 @@ class SessionManager:
 
         old_format_keys: list[str] = []
         for key, info in session_map.items():
-            # Only process entries for our tmux session
+            if not isinstance(info, dict):
+                continue
+
+            # Emdash entries: use the full key as window_id
+            if key.startswith(EMDASH_SESSION_PREFIX):
+                valid_wids.add(key)
+                if self._sync_window_from_session_map(key, info, mark_external=True):
+                    changed = True
+                # Infer provider from session name — always attempt if missing,
+                # regardless of whether _sync changed other fields.
+                state = self.get_window_state(key)
+                if not state.provider_name:
+                    session_name = key.rsplit(":", 1)[0]
+                    detected = parse_emdash_provider(session_name)
+                    if detected:
+                        state.provider_name = detected
+                        changed = True
+                continue
+
+            # Native entries: strip prefix, process by window_id
             if not key.startswith(prefix):
                 continue
             window_id = key[len(prefix) :]
@@ -745,43 +841,7 @@ class SessionManager:
                 old_format_keys.append(key)
                 continue
             valid_wids.add(window_id)
-            new_sid = info.get("session_id", "")
-            new_cwd = info.get("cwd", "")
-            new_wname = info.get("window_name", "")
-            new_transcript = info.get("transcript_path", "")
-            if not new_sid:
-                continue
-            state = self.get_window_state(window_id)
-            if state.session_id != new_sid or state.cwd != new_cwd:
-                logger.info(
-                    "Session map: window_id %s updated sid=%s, cwd=%s",
-                    window_id,
-                    new_sid,
-                    new_cwd,
-                )
-                state.session_id = new_sid
-                state.cwd = new_cwd
-                changed = True
-            if new_transcript and state.transcript_path != new_transcript:
-                state.transcript_path = new_transcript
-                changed = True
-            # Sync provider_name from session_map (hook data is authoritative).
-            # The hook fires when a CLI actually starts, so it reflects the
-            # real provider — overwrite stale values, not just empty ones.
-            new_provider = info.get("provider_name", "")
-            if new_provider and state.provider_name != new_provider:
-                state.provider_name = new_provider
-                changed = True
-            # Initialize display name from session_map only when unknown.
-            # session_map window_name comes from SessionStart and may be stale
-            # after later tmux renames.
-            if (
-                new_wname
-                and not self.window_display_names.get(window_id)
-                and not state.window_name
-            ):
-                state.window_name = new_wname
-                self.window_display_names[window_id] = new_wname
+            if self._sync_window_from_session_map(window_id, info):
                 changed = True
 
         # Clean up window_states entries not in current session_map.
@@ -861,7 +921,11 @@ class SessionManager:
 
         map_file = config.session_map_file
         map_file.parent.mkdir(parents=True, exist_ok=True)
-        window_key = f"{config.tmux_session_name}:{window_id}"
+        # Foreign windows (emdash) are already fully qualified
+        if is_foreign_window(window_id):
+            window_key = window_id
+        else:
+            window_key = f"{config.tmux_session_name}:{window_id}"
         lock_path = map_file.with_suffix(".lock")
         try:
             with open(lock_path, "w") as lock_f:

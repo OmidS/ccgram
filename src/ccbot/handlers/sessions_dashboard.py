@@ -57,6 +57,8 @@ async def _build_dashboard(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         )
 
     all_windows = await tmux_manager.list_windows()
+    emdash_windows = await tmux_manager.discover_emdash_sessions()
+    all_windows.extend(emdash_windows)
     live_ids = {w.window_id for w in all_windows}
 
     lines: list[str] = []
@@ -65,6 +67,7 @@ async def _build_dashboard(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         display_name = session_manager.get_display_name(window_id)
         ws = session_manager.get_window_state(window_id)
         alive = window_id in live_ids
+        is_external = ws.external
         status = "\U0001f7e2" if alive else "\u26ab"
 
         # Session line with provider + mode tags and cwd detail
@@ -76,22 +79,25 @@ async def _build_dashboard(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         lines.append(line)
 
         if alive:
-            action_rows.append(
-                [
-                    InlineKeyboardButton(
-                        "\u238b Esc",
-                        callback_data=f"{CB_STATUS_ESC}{window_id}"[:64],
-                    ),
-                    InlineKeyboardButton(
-                        "\U0001f4f8",
-                        callback_data=f"{CB_STATUS_SCREENSHOT}{window_id}"[:64],
-                    ),
+            row: list[InlineKeyboardButton] = [
+                InlineKeyboardButton(
+                    "\u238b Esc",
+                    callback_data=f"{CB_STATUS_ESC}{window_id}"[:64],
+                ),
+                InlineKeyboardButton(
+                    "\U0001f4f8",
+                    callback_data=f"{CB_STATUS_SCREENSHOT}{window_id}"[:64],
+                ),
+            ]
+            # External windows (emdash) are never killed — only unbind
+            if not is_external:
+                row.append(
                     InlineKeyboardButton(
                         f"\U0001f5d1 Kill {display_name}",
                         callback_data=f"{CB_SESSIONS_KILL}{window_id}"[:64],
                     ),
-                ]
-            )
+                )
+            action_rows.append(row)
 
     text = "Sessions\n\n" + "\n".join(lines)
     rows = action_rows + [[_REFRESH_BTN, _NEW_BTN]]
@@ -122,6 +128,10 @@ async def handle_sessions_kill(
     query: CallbackQuery, _user_id: int, window_id: str
 ) -> None:
     """First Kill tap — show confirmation prompt."""
+    ws = session_manager.get_window_state(window_id)
+    if ws.external:
+        await safe_edit(query, "External sessions cannot be killed from ccbot.")
+        return
     display = session_manager.get_display_name(window_id)
     keyboard = InlineKeyboardMarkup(
         [

@@ -92,6 +92,7 @@ Each Telegram Forum topic binds to one tmux window running an agent CLI. Message
 - Per-topic provider selection — different topics can use different agents simultaneously
 - Auto-detects provider from externally created tmux windows (process name, with Gemini bun/node wrapper fallback via Gemini pane-title symbols)
 - Provider-aware recovery (Continue/Resume buttons adapt to each provider's capabilities)
+- [Emdash](https://emdash.ai) integration — auto-discovers emdash tmux sessions; bind Telegram topics to emdash-managed agents with zero configuration
 
 **Extensibility**
 

@@ -107,6 +107,39 @@ Capabilities gate UX per-window: recovery keyboard only shows Continue/Resume bu
 
 Existing Claude deployments need no changes — `claude` is the default provider. Windows without an explicit `provider_name` fall back to the config default. The hook subsystem (`ccbot hook --install`) is Claude-specific and skipped for other providers.
 
+## Emdash Integration
+
+ccbot auto-discovers [emdash](https://github.com/generalaction/emdash) tmux sessions and lets users control emdash-managed agents from Telegram. Zero configuration — works automatically when both tools run on the same machine.
+
+### Prerequisites
+
+1. Enable persistent tmux sessions in emdash: add `"tmux": true` to `.emdash.json`
+2. Install ccbot's hooks: `ccbot hook --install` (global hooks coexist with emdash's per-project hooks)
+
+### How It Works
+
+When emdash creates a tmux session (e.g. `emdash-claude-main-abc123`), ccbot's global hook fires and writes the session to `session_map.json`. The session monitor picks it up, and emdash sessions appear in the window picker when creating a new Telegram topic.
+
+- **Discovery**: `tmux list-sessions` filtered by `emdash-` prefix
+- **Window IDs**: Foreign windows use qualified IDs like `emdash-claude-main-abc123:@0` — these are valid tmux target strings
+- **Lifecycle**: ccbot never kills emdash windows. They are marked `external=True` in `WindowState`
+- **Provider detection**: Parsed from session name (`emdash-{provider}-main-{id}`)
+- **Hook coexistence**: ccbot hooks are in `~/.claude/settings.json` (global), emdash hooks are in `.claude/settings.local.json` (per-project). Claude Code merges both
+
+### Architecture
+
+```
+emdash (tmux: true)                  ccbot
+─────────────────                    ─────
+Creates tmux session ──────────────► Hook fires → session_map.json
+emdash-claude-main-abc123            SessionMonitor reads entry
+                                     Window picker shows session
+User binds topic ──────────────────► send_keys/capture_pane to foreign session
+                                     Status polling, emoji, interactive UI
+User closes topic ─────────────────► Unbind only (no kill)
+emdash kills session ──────────────► Dead window detection → cleanup
+```
+
 ## Hook Configuration
 
 Auto-install: `ccbot hook --install` — installs hooks for 7 Claude Code event types:

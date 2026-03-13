@@ -18,7 +18,8 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ..config import config
-from ..session import session_manager
+from ..session import parse_emdash_provider, session_manager
+from ..window_resolver import is_foreign_window
 from .callback_data import (
     CB_DIR_CANCEL,
     CB_DIR_CONFIRM,
@@ -72,6 +73,18 @@ def clear_window_picker_state(user_data: dict | None) -> None:
         user_data.pop(UNBOUND_WINDOWS_KEY, None)
 
 
+def _window_label(window_id: str, window_name: str) -> tuple[str, str]:
+    """Return (icon, display_name) for a window in the picker.
+
+    Emdash windows get a distinct icon and provider suffix.
+    """
+    if is_foreign_window(window_id):
+        provider = parse_emdash_provider(window_id.rsplit(":", 1)[0])
+        suffix = f" ({provider})" if provider else ""
+        return "📎", f"{window_name}{suffix}"
+    return "🖥", window_name
+
+
 def build_window_picker(
     windows: list[tuple[str, str, str]],
 ) -> tuple[str, InlineKeyboardMarkup, list[str]]:
@@ -89,19 +102,26 @@ def build_window_picker(
         "These windows are running but not bound to any topic.",
         "Pick one to attach it here, or start a new session.\n",
     ]
-    for _wid, name, cwd in windows:
+    for wid, name, cwd in windows:
         display_cwd = cwd.replace(str(Path.home()), "~")
-        lines.append(f"• `{name}` — {display_cwd}")
+        icon, display_name = _window_label(wid, name)
+        lines.append(f"• {icon} `{display_name}` — {display_cwd}")
 
     buttons: list[list[InlineKeyboardButton]] = []
     for i in range(0, len(windows), 2):
         row = []
         for j in range(min(2, len(windows) - i)):
+            wid = windows[i + j][0]
             name = windows[i + j][1]
-            display = name[:12] + "…" if len(name) > _MAX_BUTTON_LABEL_LEN else name
+            icon, display_name = _window_label(wid, name)
+            display = (
+                display_name[:12] + "…"
+                if len(display_name) > _MAX_BUTTON_LABEL_LEN
+                else display_name
+            )
             row.append(
                 InlineKeyboardButton(
-                    f"🖥 {display}", callback_data=f"{CB_WIN_BIND}{i + j}"
+                    f"{icon} {display}", callback_data=f"{CB_WIN_BIND}{i + j}"
                 )
             )
         buttons.append(row)
