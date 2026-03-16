@@ -10,7 +10,7 @@ build/
 dist/
 sdist/
 wheels/
-src/ccbot/_version.py
+src/ccgram/_version.py
 
 # Virtual Environments
 .venv/
@@ -52,4 +52,4 @@ pkg/
 progress*.txt
 
 # Dev run lock
-.ccbot-dev-run.lock.d/
+.ccgram-dev-run.lock.d/
