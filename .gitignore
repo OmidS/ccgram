@@ -32,6 +32,9 @@ coverage.json
 # Go module cache (external)
 pkg/
 
+# OS
+.DS_Store
+
 # IDE
 .idea/
 .vscode/
