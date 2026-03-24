@@ -20,6 +20,7 @@ from ccgram.providers.base import (
     SessionStartEvent,
     StatusUpdate,
 )
+from ccgram.providers.process_detection import JS_RUNTIMES
 from ccgram.providers.registry import ProviderRegistry, UnknownProviderError, registry
 
 logger = structlog.get_logger()
@@ -32,6 +33,12 @@ _YOLO_FLAGS: dict[str, str] = {
     "codex": "--dangerously-bypass-approvals-and-sandbox",
     "gemini": "--yolo",
 }
+
+
+def has_yolo_mode(provider_name: str) -> bool:
+    """Return True if the provider supports YOLO (permissive) launch mode."""
+    return provider_name in _YOLO_FLAGS
+
 
 # Singleton cache
 _active: AgentProvider | None = None
@@ -48,10 +55,12 @@ def _ensure_registered() -> None:
     from ccgram.providers.claude import ClaudeProvider
     from ccgram.providers.codex import CodexProvider
     from ccgram.providers.gemini import GeminiProvider
+    from ccgram.providers.shell import ShellProvider
 
     registry.register("claude", ClaudeProvider)
     registry.register("codex", CodexProvider)
     registry.register("gemini", GeminiProvider)
+    registry.register("shell", ShellProvider)
     _registered = True
 
 
@@ -121,6 +130,11 @@ def detect_provider_from_command(pane_current_command: str) -> str:
         if basename == name or basename.startswith(name + "-"):
             return name
 
+    from .shell import KNOWN_SHELLS
+
+    if basename in KNOWN_SHELLS or basename.lstrip("-") in KNOWN_SHELLS:
+        return "shell"
+
     return ""
 
 
@@ -147,6 +161,9 @@ def should_probe_pane_title_for_provider_detection(pane_current_command: str) ->
     return False
 
 
+_CCGRAM_TITLE_PREFIX = "ccgram:"
+
+
 def detect_provider_from_runtime(
     pane_current_command: str,
     *,
@@ -157,11 +174,49 @@ def detect_provider_from_runtime(
     if detected or not pane_title:
         return detected
 
+    # Check for ccgram title stamp (set on launch via stamp_pane_title)
+    if pane_title.startswith(_CCGRAM_TITLE_PREFIX):
+        stamped = pane_title[len(_CCGRAM_TITLE_PREFIX) :].strip()
+        _ensure_registered()
+        if registry.is_valid(stamped):
+            return stamped
+
     _ensure_registered()
     for name in registry.provider_names():
         provider = registry.get(name)
         if provider.detect_from_pane_title(pane_current_command, pane_title):
             return provider.capabilities.name
+    return ""
+
+
+async def detect_provider_from_pane(
+    pane_current_command: str,
+    *,
+    pane_tty: str = "",
+    window_id: str = "",
+) -> str:
+    """Detect provider using fast path + ps-based TTY detection.
+
+    1. Fast path: basename match via ``detect_provider_from_command()``
+    2. If command is a JS runtime (node/bun/npx) and tty is available,
+       fall back to ``ps -t`` foreground process inspection with PGID cache.
+    """
+    detected = detect_provider_from_command(pane_current_command)
+    if detected:
+        return detected
+
+    if pane_tty and pane_current_command:
+        cmd = pane_current_command.strip().lower()
+        if not cmd:
+            return ""
+        basename = os.path.basename(cmd.split()[0])
+        if basename in JS_RUNTIMES:
+            from .process_detection import detect_provider_cached
+
+            detected = await detect_provider_cached(window_id or "", pane_tty)
+            if detected:
+                return detected
+
     return ""
 
 
@@ -245,10 +300,12 @@ __all__ = [
     "StatusUpdate",
     "UnknownProviderError",
     "detect_provider_from_command",
+    "detect_provider_from_pane",
     "detect_provider_from_transcript_path",
     "detect_provider_from_runtime",
     "get_provider",
     "get_provider_for_window",
+    "has_yolo_mode",
     "registry",
     "resolve_capabilities",
     "resolve_launch_command",

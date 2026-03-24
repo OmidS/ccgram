@@ -42,7 +42,7 @@ from telegram.error import BadRequest, TelegramError
 
 from ..config import config
 from ..providers import (
-    detect_provider_from_command,
+    detect_provider_from_pane,
     detect_provider_from_transcript_path,
     detect_provider_from_runtime,
     get_provider_for_window,
@@ -401,20 +401,32 @@ async def _check_autoclose_timers(bot: Bot) -> None:
             expired.append((user_id, thread_id))
 
     for user_id, thread_id in expired:
-        ts = _topic_poll_state.get((user_id, thread_id))
-        if ts:
-            ts.autoclose = None
         chat_id = session_manager.resolve_chat_id(user_id, thread_id)
+        window_id = session_manager.get_window_for_thread(user_id, thread_id)
+        removed = False
         try:
-            await bot.close_forum_topic(chat_id=chat_id, message_thread_id=thread_id)
+            await bot.delete_forum_topic(chat_id=chat_id, message_thread_id=thread_id)
+            removed = True
+        except TelegramError:
+            try:
+                await bot.close_forum_topic(
+                    chat_id=chat_id, message_thread_id=thread_id
+                )
+                removed = True
+            except TelegramError as e:
+                logger.debug("Failed to auto-close topic thread=%d: %s", thread_id, e)
+        if removed:
+            ts = _topic_poll_state.get((user_id, thread_id))
+            if ts:
+                ts.autoclose = None
             logger.info(
-                "Auto-closed topic: chat=%d thread=%d (user=%d)",
+                "Auto-removed topic: chat=%d thread=%d (user=%d)",
                 chat_id,
                 thread_id,
                 user_id,
             )
-        except TelegramError as e:
-            logger.debug("Failed to auto-close topic thread=%d: %s", thread_id, e)
+            await clear_topic_state(user_id, thread_id, bot=bot, window_id=window_id)
+            session_manager.unbind_thread(user_id, thread_id)
 
 
 def _check_transcript_activity(window_id: str, now: float) -> bool:
@@ -503,7 +515,7 @@ async def _handle_no_status(
         state = session_manager.get_window_state(window_id)
         raw_provider = getattr(state, "provider_name", "")
         provider_name = raw_provider.lower() if isinstance(raw_provider, str) else ""
-        if provider_name in ("codex", "gemini"):
+        if provider_name in ("codex", "gemini", "shell"):
             ws.has_seen_status = True
             await _transition_to_idle(
                 bot, user_id, window_id, thread_id, chat_id, display, notif_mode
@@ -886,13 +898,35 @@ async def _handle_dead_window_notification(
     else:
         text = f"\u26a0 Session `{display}` ended."
         keyboard = None
-    await rate_limit_send_message(
+    sent = await rate_limit_send_message(
         bot,
         chat_id,
         text,
         message_thread_id=thread_id,
         reply_markup=keyboard,
     )
+    if sent is None:
+        # Send failed — probe topic to detect deletion and clean up stale binding
+        try:
+            await bot.unpin_all_forum_topic_messages(
+                chat_id=chat_id, message_thread_id=thread_id
+            )
+        except BadRequest as probe_err:
+            if (
+                "thread not found" in probe_err.message.lower()
+                or "topic_id_invalid" in probe_err.message.lower()
+            ):
+                _get_window_state(wid).probe_failures = 0
+                await clear_topic_state(user_id, thread_id, bot, window_id=wid)
+                session_manager.unbind_thread(user_id, thread_id)
+                logger.info(
+                    "Topic deleted: unbound window %s for thread %d, user %d",
+                    wid,
+                    thread_id,
+                    user_id,
+                )
+        except TelegramError:
+            pass  # Transient — 60s probe will handle it
     _dead_notified.add(dead_key)
 
 
@@ -964,10 +998,34 @@ async def _probe_topic_existence(bot: Bot) -> None:
                     )
 
 
+async def _maybe_check_passive_shell(
+    bot: Bot, user_id: int, window_id: str, thread_id: int
+) -> None:
+    """Relay shell output from direct tmux interaction to Telegram."""
+    state = session_manager.get_window_state(window_id)
+    if not state or state.provider_name != "shell":
+        return
+    ws = _window_poll_state.get(window_id)
+    rendered = ws.last_rendered_text if ws else None
+    if rendered is None:
+        # update_status_message hasn't run yet (queue busy, first poll).
+        # Do a direct capture so shell output isn't lost.
+        raw = await tmux_manager.capture_pane(window_id)
+        if not raw:
+            return
+        rendered = raw
+    from .shell_capture import check_passive_shell_output
+
+    await check_passive_shell_output(bot, user_id, thread_id, window_id, rendered)
+
+
 async def _maybe_discover_transcript(
     window_id: str,
     *,
     _window: TmuxWindow | None = None,
+    bot: Bot | None = None,  # noqa: ARG001
+    user_id: int = 0,  # noqa: ARG001
+    thread_id: int = 0,  # noqa: ARG001
 ) -> None:
     """Discover and register transcript for hookless providers (Codex, Gemini).
 
@@ -989,6 +1047,9 @@ async def _maybe_discover_transcript(
     Args:
         _window: Pre-fetched TmuxWindow (avoids duplicate list_windows call
             when called from the poll loop).
+        bot: Telegram Bot instance for sending prompt setup offers.
+        user_id: Telegram user ID for the topic owner.
+        thread_id: Telegram thread ID for the bound topic.
     """
     from ..providers import registry
 
@@ -1000,7 +1061,9 @@ async def _maybe_discover_transcript(
 
     # Re-detect provider from the current pane to recover from stale mappings.
     if w and w.pane_current_command:
-        detected = detect_provider_from_command(w.pane_current_command)
+        detected = await detect_provider_from_pane(
+            w.pane_current_command, pane_tty=w.pane_tty, window_id=window_id
+        )
         if not detected and should_probe_pane_title_for_provider_detection(
             w.pane_current_command
         ):
@@ -1010,7 +1073,17 @@ async def _maybe_discover_transcript(
                 pane_title=pane_title,
             )
         if detected and detected != state.provider_name:
+            old_provider = state.provider_name
             session_manager.set_window_provider(window_id, detected, cwd=w.cwd or None)
+            if detected == "shell":
+                state.transcript_path = ""  # shell has no transcripts
+                from ..providers.shell import setup_shell_prompt
+
+                await setup_shell_prompt(window_id, clear=False)
+            elif old_provider == "shell":
+                from .shell_capture import clear_shell_monitor_state
+
+                clear_shell_monitor_state(window_id)
         elif not detected and state.transcript_path:
             inferred = detect_provider_from_transcript_path(state.transcript_path)
             if inferred and inferred != state.provider_name:
@@ -1038,16 +1111,24 @@ async def _maybe_discover_transcript(
     if state.provider_name:
         # Explicit hookless provider — try only that one
         provider = get_provider_for_window(window_id)
+        # Shell provider has no transcripts — skip discovery
+        if provider.capabilities.name == "shell":
+            return
         providers_to_try = [(provider.capabilities.name, provider)]
     else:
-        # Detection failed — check pane is alive (skip dead shells)
+        # Detection failed — pane is a shell prompt: assign shell provider
         if w and is_shell_prompt(w.pane_current_command):
+            session_manager.set_window_provider(window_id, "shell")
+            state.transcript_path = ""  # shell has no transcripts
+            from ..providers.shell import setup_shell_prompt
+
+            await setup_shell_prompt(window_id, clear=False)
             return
-        # Try all hookless providers
+        # Try all hookless providers (exclude shell — no transcripts)
         providers_to_try = [
             (name, registry.get(name))
             for name in registry.provider_names()
-            if not registry.get(name).capabilities.supports_hook
+            if not registry.get(name).capabilities.supports_hook and name != "shell"
         ]
 
     # Disable staleness check if pane process is alive
@@ -1132,10 +1213,21 @@ async def status_poll_loop(bot: Bot) -> None:
                         continue
 
                     # Discover transcript for hookless providers (Codex, Gemini)
-                    await _maybe_discover_transcript(wid, _window=w)
+                    await _maybe_discover_transcript(
+                        wid,
+                        _window=w,
+                        bot=bot,
+                        user_id=user_id,
+                        thread_id=thread_id,
+                    )
 
                     queue = get_message_queue(user_id)
                     if queue and not queue.empty():
+                        # Queue busy — skip status updates but still run passive
+                        # shell monitoring (uses stale pyte text, hash dedup
+                        # handles it) so shell output relay isn't blocked by
+                        # unrelated windows flooding the queue.
+                        await _maybe_check_passive_shell(bot, user_id, wid, thread_id)
                         continue
                     await update_status_message(
                         bot,
@@ -1146,6 +1238,8 @@ async def status_poll_loop(bot: Bot) -> None:
                     )
                     # Scan non-active panes for interactive prompts (agent teams)
                     await _scan_window_panes(bot, user_id, wid, thread_id)
+                    # Relay shell output from direct tmux interaction
+                    await _maybe_check_passive_shell(bot, user_id, wid, thread_id)
                 except (TelegramError, OSError) as e:
                     log_throttled(
                         logger,

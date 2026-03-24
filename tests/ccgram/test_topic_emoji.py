@@ -8,7 +8,9 @@ from telegram.error import BadRequest, TelegramError
 from conftest import make_mock_provider
 
 from ccgram.handlers.topic_emoji import (
-    DEBOUNCE_SECONDS,
+    DEBOUNCE_TERMINAL_SECONDS,
+    DEBOUNCE_TO_ACTIVE_SECONDS,
+    DEBOUNCE_TO_IDLE_SECONDS,
     EMOJI_ACTIVE,
     EMOJI_DEAD,
     EMOJI_DONE,
@@ -20,6 +22,18 @@ from ccgram.handlers.topic_emoji import (
     strip_emoji_prefix,
     update_topic_emoji,
 )
+
+_DEBOUNCE_FOR: dict[str, float] = {
+    "active": DEBOUNCE_TO_ACTIVE_SECONDS,
+    "idle": DEBOUNCE_TO_IDLE_SECONDS,
+    "done": DEBOUNCE_TERMINAL_SECONDS,
+    "dead": DEBOUNCE_TERMINAL_SECONDS,
+}
+
+
+def _debounce_for(state: str) -> float:
+    """Return the debounce duration for a given state."""
+    return _DEBOUNCE_FOR[state]
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +84,7 @@ async def _debounced_update(
     with patch(_PATCH_MONOTONIC) as mock_monotonic:
         mock_monotonic.return_value = 0.0
         await update_topic_emoji(bot, chat_id, thread_id, state, display_name)
-        mock_monotonic.return_value = DEBOUNCE_SECONDS + 0.1
+        mock_monotonic.return_value = _debounce_for(state) + 0.1
         await update_topic_emoji(bot, chat_id, thread_id, state, display_name)
 
 
@@ -142,10 +156,10 @@ class TestUpdateTopicEmoji:
                 await update_topic_emoji(bot, -100, 42, state, "myproject")
             bot.edit_forum_topic.assert_not_called()
 
-            # Settle on "active" and wait past DEBOUNCE_SECONDS
+            # Settle on "active" and wait past _debounce_for("active")
             mock_monotonic.return_value = 4.0
             await update_topic_emoji(bot, -100, 42, "active", "myproject")
-            mock_monotonic.return_value = 4.0 + DEBOUNCE_SECONDS + 0.1
+            mock_monotonic.return_value = 4.0 + _debounce_for("active") + 0.1
             await update_topic_emoji(bot, -100, 42, "active", "myproject")
 
         bot.edit_forum_topic.assert_called_once_with(
@@ -186,7 +200,74 @@ class TestUpdateTopicEmoji:
         with patch(_PATCH_MONOTONIC) as mock_monotonic:
             mock_monotonic.return_value = 0.0
             await update_topic_emoji(bot, -100, 42, "active", "myproject")
-            mock_monotonic.return_value = DEBOUNCE_SECONDS - 0.1
+            mock_monotonic.return_value = _debounce_for("active") - 0.1
+            await update_topic_emoji(bot, -100, 42, "active", "myproject")
+        bot.edit_forum_topic.assert_not_called()
+
+    async def test_active_fires_faster_than_idle(self) -> None:
+        """Active debounce (5s) is shorter than idle debounce (30s)."""
+        bot = AsyncMock()
+        midpoint = DEBOUNCE_TO_ACTIVE_SECONDS + 0.1
+        assert midpoint < DEBOUNCE_TO_IDLE_SECONDS
+
+        with patch(_PATCH_MONOTONIC) as mock_monotonic:
+            # Start pending "active" transition
+            mock_monotonic.return_value = 0.0
+            await update_topic_emoji(bot, -100, 42, "active", "myproject")
+            # After 5.1s — active fires
+            mock_monotonic.return_value = midpoint
+            await update_topic_emoji(bot, -100, 42, "active", "myproject")
+        bot.edit_forum_topic.assert_called_once_with(
+            chat_id=-100,
+            message_thread_id=42,
+            name=f"{EMOJI_ACTIVE} myproject",
+        )
+
+    async def test_idle_does_not_fire_at_active_debounce_time(self) -> None:
+        """Idle requires the longer debounce — doesn't fire at active's threshold."""
+        bot = AsyncMock()
+        midpoint = DEBOUNCE_TO_ACTIVE_SECONDS + 0.1
+        assert midpoint < DEBOUNCE_TO_IDLE_SECONDS
+
+        with patch(_PATCH_MONOTONIC) as mock_monotonic:
+            mock_monotonic.return_value = 0.0
+            await update_topic_emoji(bot, -100, 42, "idle", "myproject")
+            # After 5.1s — NOT enough for idle
+            mock_monotonic.return_value = midpoint
+            await update_topic_emoji(bot, -100, 42, "idle", "myproject")
+        bot.edit_forum_topic.assert_not_called()
+
+    async def test_idle_fires_after_full_debounce(self) -> None:
+        """Idle fires after 30s+ of consistent idle state."""
+        bot = AsyncMock()
+        with patch(_PATCH_MONOTONIC) as mock_monotonic:
+            mock_monotonic.return_value = 0.0
+            await update_topic_emoji(bot, -100, 42, "idle", "myproject")
+            mock_monotonic.return_value = DEBOUNCE_TO_IDLE_SECONDS + 0.1
+            await update_topic_emoji(bot, -100, 42, "idle", "myproject")
+        bot.edit_forum_topic.assert_called_once_with(
+            chat_id=-100,
+            message_thread_id=42,
+            name=f"{EMOJI_IDLE} myproject",
+        )
+
+    async def test_brief_pause_during_work_stays_green(self) -> None:
+        """Agent works, pauses briefly, resumes — topic stays green throughout."""
+        bot = AsyncMock()
+        with patch(_PATCH_MONOTONIC) as mock_monotonic:
+            # Agent starts working — green fires after 5s
+            mock_monotonic.return_value = 0.0
+            await update_topic_emoji(bot, -100, 42, "active", "myproject")
+            mock_monotonic.return_value = DEBOUNCE_TO_ACTIVE_SECONDS + 0.1
+            await update_topic_emoji(bot, -100, 42, "active", "myproject")
+        assert bot.edit_forum_topic.call_count == 1
+        bot.edit_forum_topic.reset_mock()
+
+        with patch(_PATCH_MONOTONIC) as mock_monotonic:
+            # Brief idle (10s) then active again — idle never fires (needs 30s)
+            mock_monotonic.return_value = 10.0
+            await update_topic_emoji(bot, -100, 42, "idle", "myproject")
+            mock_monotonic.return_value = 20.0
             await update_topic_emoji(bot, -100, 42, "active", "myproject")
         bot.edit_forum_topic.assert_not_called()
 
@@ -277,7 +358,7 @@ class TestClearTopicEmojiState:
             mock_monotonic.return_value = 100.0
             await update_topic_emoji(bot, -100, 42, "active", "myproject")
             bot.edit_forum_topic.assert_not_called()
-            mock_monotonic.return_value = 100.0 + DEBOUNCE_SECONDS + 0.1
+            mock_monotonic.return_value = 100.0 + _debounce_for("active") + 0.1
             await update_topic_emoji(bot, -100, 42, "active", "myproject")
         bot.edit_forum_topic.assert_called_once()
 

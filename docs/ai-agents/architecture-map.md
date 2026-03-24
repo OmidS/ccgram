@@ -23,12 +23,28 @@
 - `src/ccgram/providers/base.py` defines the provider contract.
   - `discover_transcript(cwd, window_key, *, max_age=None)` is the hookless discovery contract (used by Codex/Gemini; `max_age=0` disables staleness checks for alive panes).
 - `src/ccgram/providers/__init__.py` resolves per-window provider selection.
-- `src/ccgram/providers/{claude,codex,gemini}.py` implement provider-specific behavior.
+- `src/ccgram/providers/{claude,codex,gemini,shell}.py` implement provider-specific behavior.
 - `src/ccgram/command_catalog.py` discovers provider commands from filesystem (skills, custom commands) with 60s TTL caching.
 - `src/ccgram/cc_commands.py` registers discovered commands as Telegram bot menu entries.
 - `src/ccgram/interactive_prompt_formatter.py` normalizes provider interactive prompt text for Telegram readability (currently Codex edit approvals).
 - `src/ccgram/codex_status.py` extracts Codex status snapshots from JSONL transcripts.
 - `src/ccgram/screenshot.py` renders terminal text to PNG (PIL, ANSI color, font fallback).
+
+4a. LLM command generation layer
+
+- `src/ccgram/llm/base.py` defines the `CommandGenerator` protocol and `CommandResult` datatype used by all LLM backends.
+- `src/ccgram/llm/httpx_completer.py` implements completers for OpenAI-compatible APIs and the Anthropic API via httpx. Temperature is configurable via `CCGRAM_LLM_TEMPERATURE`.
+- `src/ccgram/llm/__init__.py` owns the `_PROVIDERS` registry and resolves the active backend from config (provider, model, temperature).
+- `src/ccgram/handlers/shell_commands.py` consumes `CommandGenerator` to drive the NL→command→approval-keyboard flow; also handles raw `!` command execution.
+- `src/ccgram/handlers/shell_capture.py` polls the shell pane after execution and streams output back to Telegram via in-place edits.
+
+4b. Voice transcription layer
+
+- `src/ccgram/whisper/base.py` defines the `WhisperTranscriber` protocol and `TranscriptionResult` datatype.
+- `src/ccgram/whisper/httpx_transcriber.py` implements OpenAI-compatible transcription via httpx (OpenAI, Groq).
+- `src/ccgram/whisper/__init__.py` resolves the active transcriber from config (provider, API key, model).
+- `src/ccgram/handlers/voice_handler.py` downloads voice audio, transcribes via Whisper, and shows confirm/discard keyboard.
+- `src/ccgram/handlers/voice_callbacks.py` handles confirm/discard callbacks; shell provider transcriptions route through the LLM for NL→command generation.
 
 5. Integrations
 
@@ -43,6 +59,22 @@ Inbound user message (Telegram -> tmux):
 2. `handlers/text_handler.py` validates context and resolves topic binding.
 3. `session.py` maps `(user_id, thread_id)` -> `window_id`.
 4. `tmux_manager.py` sends keys to the mapped window/pane.
+
+Shell provider message flow (NL -> command -> shell):
+
+1. `handlers/text_handler.py` detects shell provider window and routes to `shell_commands.py`.
+2. `shell_commands.py` calls `llm/` to generate a suggested command from the NL description.
+3. Telegram approval keyboard is rendered; user confirms or cancels.
+4. On approval, the command is sent to the tmux pane via `tmux_manager.py`.
+5. `shell_capture.py` polls pane output and relays it back to Telegram via in-place edits.
+
+Voice message flow (voice -> transcription -> agent):
+
+1. `handlers/voice_handler.py` downloads audio and transcribes via `whisper/`.
+2. Confirm/discard keyboard is shown with the transcription.
+3. On confirm, `handlers/voice_callbacks.py` checks the window's provider.
+4. For shell provider: routes transcribed text through `shell_commands.py` (LLM -> approval keyboard).
+5. For other providers: sends transcribed text directly to the tmux window.
 
 Outbound agent output (provider transcript/event -> Telegram):
 
@@ -80,6 +112,7 @@ Provider transcript sources (read-only):
 - Codex: `~/.codex/sessions/`
 - Gemini: `~/.gemini/tmp/`
   - Gemini discovery matches by `projectHash` (or configured project alias dir) and does not full-scan unrelated project dirs.
+- Shell: no transcript files; output is captured directly from the tmux pane by `handlers/shell_capture.py`.
 
 ## Core Flow
 

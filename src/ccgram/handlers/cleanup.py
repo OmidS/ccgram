@@ -90,6 +90,17 @@ async def clear_topic_state(
 
     clear_history(user_id, thread_id)
 
+    # Clear shell provider state (capture tasks + pending commands + passive monitor)
+    from .shell_capture import clear_shell_monitor_state
+    from .shell_commands import clear_shell_pending
+
+    clear_shell_pending(chat_id, thread_id)
+    if window_id:
+        clear_shell_monitor_state(window_id)
+        from ..providers.process_detection import clear_detection_cache
+
+        clear_detection_cache(window_id)
+
     # Clear pending thread state from user_data
     if user_data is not None and user_data.get(PENDING_THREAD_ID) == thread_id:
         user_data.pop(PENDING_THREAD_ID, None)

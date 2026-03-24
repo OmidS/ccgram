@@ -20,7 +20,7 @@ from telegram import (
     InlineKeyboardMarkup,
     Update,
 )
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from ..config import config
@@ -86,10 +86,7 @@ def _format_report(
 
     if closed_topic_count > 0:
         topic_word = "topic" if closed_topic_count == 1 else "topics"
-        lines.append(
-            f"\u2139 Closed {closed_topic_count} stale {topic_word} "
-            "(delete manually in Telegram)"
-        )
+        lines.append(f"\u2139 Removed {closed_topic_count} stale {topic_word}")
 
     # Binding summary
     if audit.total_bindings == 0:
@@ -130,8 +127,41 @@ def _format_report(
     return text, keyboard
 
 
+def _is_topic_gone(exc: BadRequest) -> bool:
+    """Check if a BadRequest means the topic no longer exists."""
+    msg = exc.message.lower()
+    return "thread not found" in msg or "topic_id_invalid" in msg
+
+
+async def _remove_topic(bot: Bot, chat_id: int, thread_id: int) -> bool:
+    """Try to delete a topic, fall back to close. Returns True on success.
+
+    Only "topic not found" BadRequest is treated as success; other BadRequest
+    errors (e.g. insufficient rights) fall through to the close fallback.
+    """
+    try:
+        await bot.delete_forum_topic(chat_id, thread_id)
+        return True
+    except BadRequest as e:
+        if _is_topic_gone(e):
+            return True
+    except TelegramError:
+        pass
+    try:
+        await bot.close_forum_topic(chat_id, thread_id)
+        return True
+    except TelegramError:
+        return False
+
+
 async def _close_ghost_topics(bot: Bot, issues: list[AuditIssue]) -> int:
-    """Close Telegram topics for ghost bindings. Returns count of closed topics."""
+    """Delete (or close) Telegram topics for ghost bindings.
+
+    Tries ``delete_forum_topic`` first to fully remove the dead topic from the
+    sidebar.  Falls back to ``close_forum_topic`` if deletion fails (e.g.
+    missing ``can_manage_topics`` or General topic).  Returns count of
+    topics successfully deleted/closed.
+    """
     closed_count = 0
     for issue in issues:
         if issue.category != "ghost_binding":
@@ -143,30 +173,27 @@ async def _close_ghost_topics(bot: Bot, issues: list[AuditIssue]) -> int:
         thread_id = int(match.group(2))
         window_id = match.group(3)
         chat_id = session_manager.resolve_chat_id(user_id, thread_id)
-        topic_closed = False
+        topic_removed = False
         if chat_id == user_id:
             logger.warning(
                 "No group chat_id for ghost topic thread=%d, skipping close",
                 thread_id,
             )
         else:
-            try:
-                await bot.close_forum_topic(chat_id, thread_id)
-                topic_closed = True
-            except TelegramError:
-                logger.exception(
-                    "Failed to close ghost topic thread=%d window=%s",
+            topic_removed = await _remove_topic(bot, chat_id, thread_id)
+            if not topic_removed:
+                logger.warning(
+                    "Failed to delete/close ghost topic thread=%d window=%s",
                     thread_id,
                     window_id,
                 )
-        # Only unbind if topic was closed (or no group chat to close)
-        if topic_closed or chat_id == user_id:
+        if topic_removed or chat_id == user_id:
             try:
                 await clear_topic_state(
                     user_id, thread_id, bot=bot, window_id=window_id
                 )
                 session_manager.unbind_thread(user_id, thread_id)
-                if topic_closed:
+                if topic_removed:
                     closed_count += 1
             except OSError, TelegramError:
                 logger.exception(

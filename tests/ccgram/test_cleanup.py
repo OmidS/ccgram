@@ -21,9 +21,9 @@ class TestClearTopicState:
 
         mock_enqueue.assert_called_once()
         args = mock_enqueue.call_args
-        assert args[0][1] == 1  # user_id
-        assert args[0][2] == "@0"  # window_id passed through
-        assert args[0][3] is None  # status_text (clear)
+        assert args[0][1] == 1
+        assert args[0][2] == "@0"
+        assert args[0][3] is None
         assert args[1]["thread_id"] == 42
         mock_clear_info.assert_not_called()
 

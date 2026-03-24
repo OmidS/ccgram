@@ -114,15 +114,17 @@ class TestAutocloseTimers:
             patch("ccgram.handlers.status_polling.config") as mock_config,
             patch("ccgram.handlers.status_polling.session_manager") as mock_sm,
             patch("ccgram.handlers.status_polling.time") as mock_time,
+            patch("ccgram.handlers.status_polling.clear_topic_state"),
         ):
             mock_config.autoclose_done_minutes = 30
             mock_config.autoclose_dead_minutes = minutes
             mock_time.monotonic.return_value = elapsed
             mock_sm.resolve_chat_id.return_value = -100
             await _check_autoclose_timers(bot)
-        bot.close_forum_topic.assert_called_once_with(
+        bot.delete_forum_topic.assert_called_once_with(
             chat_id=-100, message_thread_id=42
         )
+        mock_sm.unbind_thread.assert_called_once_with(1, 42)
         assert not _has_autoclose(1, 42)
 
     async def test_check_not_expired_yet(self) -> None:
@@ -852,6 +854,154 @@ class TestPruneStaleStatePolling:
         mock_sm.prune_stale_state.assert_called_once_with(set())
 
 
+class TestProviderSwitchPromptSetup:
+    async def test_switch_to_shell_offers_prompt_setup(self) -> None:
+        from ccgram.handlers.status_polling import _maybe_discover_transcript
+
+        bot = AsyncMock(spec=Bot)
+        with (
+            patch("ccgram.handlers.status_polling.session_manager") as mock_sm,
+            patch("ccgram.handlers.status_polling.tmux_manager") as mock_tmux,
+            patch(
+                "ccgram.handlers.status_polling.detect_provider_from_pane",
+                new_callable=AsyncMock,
+                return_value="shell",
+            ),
+            patch(
+                "ccgram.providers.shell.setup_shell_prompt",
+                new_callable=AsyncMock,
+            ) as mock_setup,
+        ):
+            mock_sm.window_states = {
+                "@7": MagicMock(
+                    session_id="",
+                    cwd="/proj",
+                    provider_name="claude",
+                    transcript_path="",
+                )
+            }
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(pane_current_command="fish", cwd="/proj")
+            )
+            await _maybe_discover_transcript("@7", bot=bot, user_id=1, thread_id=42)
+
+        mock_sm.set_window_provider.assert_called_once_with("@7", "shell", cwd="/proj")
+        mock_setup.assert_awaited_once_with("@7", clear=False)
+
+    async def test_switch_to_claude_does_not_offer_prompt_setup(self) -> None:
+        from ccgram.handlers.status_polling import _maybe_discover_transcript
+
+        mock_provider = MagicMock()
+        mock_provider.capabilities.supports_hook = True
+
+        bot = AsyncMock(spec=Bot)
+        with (
+            patch("ccgram.handlers.status_polling.session_manager") as mock_sm,
+            patch("ccgram.handlers.status_polling.tmux_manager") as mock_tmux,
+            patch(
+                "ccgram.handlers.status_polling.detect_provider_from_pane",
+                new_callable=AsyncMock,
+                return_value="claude",
+            ),
+            patch(
+                "ccgram.handlers.status_polling.get_provider_for_window",
+                return_value=mock_provider,
+            ),
+            patch(
+                "ccgram.providers.shell.setup_shell_prompt",
+                new_callable=AsyncMock,
+            ) as mock_setup,
+        ):
+            mock_sm.window_states = {
+                "@7": MagicMock(
+                    session_id="",
+                    cwd="/proj",
+                    provider_name="shell",
+                    transcript_path="",
+                )
+            }
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(pane_current_command="claude", cwd="/proj")
+            )
+            await _maybe_discover_transcript("@7", bot=bot, user_id=1, thread_id=42)
+
+        mock_setup.assert_not_awaited()
+
+    async def test_fallback_shell_assignment_offers_prompt_setup(self) -> None:
+        from ccgram.handlers.status_polling import _maybe_discover_transcript
+
+        bot = AsyncMock(spec=Bot)
+        with (
+            patch("ccgram.handlers.status_polling.session_manager") as mock_sm,
+            patch("ccgram.handlers.status_polling.tmux_manager") as mock_tmux,
+            patch("ccgram.handlers.status_polling.config") as mock_config,
+            patch(
+                "ccgram.handlers.status_polling.detect_provider_from_pane",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch(
+                "ccgram.providers.shell.setup_shell_prompt",
+                new_callable=AsyncMock,
+            ) as mock_setup,
+        ):
+            mock_sm.window_states = {
+                "@7": MagicMock(
+                    session_id="",
+                    cwd="/proj",
+                    provider_name="",
+                    transcript_path="",
+                )
+            }
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(pane_current_command="bash", cwd="/proj")
+            )
+            mock_tmux.get_pane_title = AsyncMock(return_value="")
+            mock_config.tmux_session_name = "ccgram"
+            await _maybe_discover_transcript("@7", bot=bot, user_id=1, thread_id=42)
+
+        mock_sm.set_window_provider.assert_called_once_with("@7", "shell")
+        mock_setup.assert_awaited_once_with("@7", clear=False)
+
+    async def test_fallback_shell_assignment_sets_up_prompt_without_bot(self) -> None:
+        from ccgram.handlers.status_polling import _maybe_discover_transcript
+
+        with (
+            patch("ccgram.handlers.status_polling.session_manager") as mock_sm,
+            patch("ccgram.handlers.status_polling.tmux_manager") as mock_tmux,
+            patch("ccgram.handlers.status_polling.config") as mock_config,
+            patch(
+                "ccgram.handlers.status_polling.detect_provider_from_pane",
+                new_callable=AsyncMock,
+                return_value="",
+            ),
+            patch(
+                "ccgram.providers.shell.setup_shell_prompt",
+                new_callable=AsyncMock,
+            ) as mock_setup,
+            patch(
+                "ccgram.handlers.status_polling.should_probe_pane_title_for_provider_detection",
+                return_value=False,
+            ),
+        ):
+            mock_sm.window_states = {
+                "@7": MagicMock(
+                    session_id="",
+                    cwd="/proj",
+                    provider_name="",
+                    transcript_path="",
+                )
+            }
+            mock_tmux.find_window_by_id = AsyncMock(
+                return_value=MagicMock(pane_current_command="bash", cwd="/proj")
+            )
+            mock_tmux.get_pane_title = AsyncMock(return_value="")
+            mock_config.tmux_session_name = "ccgram"
+            await _maybe_discover_transcript("@7")
+
+        mock_setup.assert_awaited_once_with("@7", clear=False)
+
+
 class TestMaybeDiscoverTranscript:
     async def test_noop_when_discovered_session_matches_current(self) -> None:
         from ccgram.handlers.status_polling import _maybe_discover_transcript
@@ -1326,7 +1476,8 @@ class TestMaybeDiscoverTranscript:
                 side_effect=_provider_for_window,
             ),
             patch(
-                "ccgram.handlers.status_polling.detect_provider_from_command",
+                "ccgram.handlers.status_polling.detect_provider_from_pane",
+                new_callable=AsyncMock,
                 return_value="",
             ),
             patch("ccgram.handlers.status_polling.config") as mock_config,
@@ -1407,7 +1558,8 @@ class TestMaybeDiscoverTranscript:
                 side_effect=_provider_for_window,
             ),
             patch(
-                "ccgram.handlers.status_polling.detect_provider_from_command",
+                "ccgram.handlers.status_polling.detect_provider_from_pane",
+                new_callable=AsyncMock,
                 return_value="",
             ),
             patch(

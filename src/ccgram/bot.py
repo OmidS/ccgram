@@ -39,7 +39,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatAction
-from telegram.error import Conflict, RetryAfter, TelegramError
+from telegram.error import BadRequest, Conflict, RetryAfter, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -56,7 +56,7 @@ from .cc_commands import (
 )
 from .providers import (
     AgentProvider,
-    detect_provider_from_command,
+    detect_provider_from_pane,
     detect_provider_from_runtime,
     get_provider,
     get_provider_for_window,
@@ -72,6 +72,7 @@ from .handlers.callback_data import (
     CB_DIR_CANCEL,
     CB_DIR_CONFIRM,
     CB_DIR_FAV,
+    CB_DIR_HOME,
     CB_DIR_PAGE,
     CB_DIR_SELECT,
     CB_DIR_STAR,
@@ -106,6 +107,10 @@ from .handlers.callback_data import (
     CB_TOOLBAR_CTRLC,
     CB_TOOLBAR_DISMISS,
     CB_VOICE,
+    CB_SHELL_CANCEL,
+    CB_SHELL_CONFIRM_DANGER,
+    CB_SHELL_EDIT,
+    CB_SHELL_RUN,
     CB_WIN_BIND,
     CB_WIN_CANCEL,
     CB_WIN_NEW,
@@ -457,6 +462,11 @@ async def history_command(update: Update, _context: ContextTypes.DEFAULT_TYPE) -
     window_id = session_manager.resolve_window_for_thread(user.id, thread_id)
     if not window_id:
         await safe_reply(update.message, "\u274c No session bound to this topic.")
+        return
+
+    provider = get_provider_for_window(window_id)
+    if not provider.capabilities.supports_structured_transcript:
+        await safe_reply(update.message, "No transcript available for this provider.")
         return
 
     await send_history(update.message, window_id)
@@ -1240,6 +1250,7 @@ _CB_DIRECTORY = (
     CB_DIR_STAR,
     CB_DIR_SELECT,
     CB_DIR_UP,
+    CB_DIR_HOME,
     CB_DIR_PAGE,
     CB_DIR_CONFIRM,
     CB_PROV_SELECT,
@@ -1269,6 +1280,12 @@ _CB_RECOVERY = (
 )
 _CB_VOICE = (CB_VOICE,)
 _CB_RESUME = (CB_RESUME_PICK, CB_RESUME_PAGE, CB_RESUME_CANCEL)
+_CB_SHELL = (
+    CB_SHELL_RUN,
+    CB_SHELL_EDIT,
+    CB_SHELL_CANCEL,
+    CB_SHELL_CONFIRM_DANGER,
+)
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1354,6 +1371,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Voice message callbacks
     elif data.startswith(_CB_VOICE):
         await handle_voice_callback(update, context)
+
+    # Shell command approval
+    elif data.startswith(_CB_SHELL):
+        from .handlers.shell_commands import handle_shell_callback
+
+        thread_id = _get_thread_id(update)
+        await handle_shell_callback(query, user.id, data, context.bot, thread_id)
 
     # Sync command
     elif data == CB_SYNC_FIX:
@@ -1502,7 +1526,11 @@ async def _handle_new_window(event: NewWindowEvent, bot: Bot) -> None:
     if not existing_provider:
         w = await tmux_manager.find_window_by_id(event.window_id)
         if w and w.pane_current_command:
-            detected = detect_provider_from_command(w.pane_current_command)
+            detected = await detect_provider_from_pane(
+                w.pane_current_command,
+                pane_tty=w.pane_tty,
+                window_id=event.window_id,
+            )
             if not detected and should_probe_pane_title_for_provider_detection(
                 w.pane_current_command
             ):
@@ -1769,6 +1797,9 @@ async def _error_handler(_update: object, context: ContextTypes.DEFAULT_TYPE) ->
             "Shutting down to avoid conflicts."
         )
         os.kill(os.getpid(), signal.SIGINT)
+        return
+    if isinstance(context.error, BadRequest) and "too old" in str(context.error):
+        logger.debug("Callback query expired (query too old)")
         return
     logger.error("Unhandled bot error", exc_info=context.error)
 

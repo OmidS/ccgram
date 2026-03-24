@@ -40,8 +40,11 @@ class TestDetectProviderFromCommand:
     def test_unknown_command_returns_empty(self) -> None:
         assert detect_provider_from_command("vim") == ""
 
-    def test_shell_command_returns_empty(self) -> None:
-        assert detect_provider_from_command("bash") == ""
+    def test_shell_command_detected(self) -> None:
+        assert detect_provider_from_command("bash") == "shell"
+        assert detect_provider_from_command("zsh") == "shell"
+        assert detect_provider_from_command("fish") == "shell"
+        assert detect_provider_from_command("-bash") == "shell"
 
     def test_empty_command_returns_empty(self) -> None:
         assert detect_provider_from_command("") == ""
@@ -77,12 +80,29 @@ class TestDetectProviderFromRuntime:
     def test_prefers_command_detection_when_available(self) -> None:
         assert detect_provider_from_runtime("codex", pane_title="◇ Ready") == "codex"
 
+    def test_detects_provider_from_ccgram_title_stamp(self) -> None:
+        assert detect_provider_from_runtime("bun", pane_title="ccgram:codex") == "codex"
+        assert (
+            detect_provider_from_runtime("node", pane_title="ccgram:claude") == "claude"
+        )
+        assert (
+            detect_provider_from_runtime("bun", pane_title="ccgram:gemini") == "gemini"
+        )
+        assert detect_provider_from_runtime("bun", pane_title="ccgram:shell") == "shell"
+
+    def test_ignores_invalid_ccgram_stamp(self) -> None:
+        assert detect_provider_from_runtime("bun", pane_title="ccgram:unknown") == ""
+
 
 class TestHandleNewWindowAutoDetection:
     @patch("ccgram.bot.tmux_manager")
     @patch("ccgram.bot.session_manager")
     @patch("ccgram.bot.config")
-    @patch("ccgram.bot.detect_provider_from_command", return_value="codex")
+    @patch(
+        "ccgram.bot.detect_provider_from_pane",
+        new_callable=AsyncMock,
+        return_value="codex",
+    )
     async def test_sets_detected_provider(
         self,
         mock_detect: MagicMock,
@@ -108,13 +128,13 @@ class TestHandleNewWindowAutoDetection:
 
         await _handle_new_window(event, bot)
 
-        mock_detect.assert_called_once_with("codex")
+        mock_detect.assert_awaited_once()
         mock_sm.set_window_provider.assert_called_once_with("@5", "codex")
 
     @patch("ccgram.bot.tmux_manager")
     @patch("ccgram.bot.session_manager")
     @patch("ccgram.bot.config")
-    @patch("ccgram.bot.detect_provider_from_command")
+    @patch("ccgram.bot.detect_provider_from_pane", new_callable=AsyncMock)
     async def test_skips_detection_when_no_pane_command(
         self,
         mock_detect: MagicMock,
@@ -145,7 +165,7 @@ class TestHandleNewWindowAutoDetection:
     @patch("ccgram.bot.tmux_manager")
     @patch("ccgram.bot.session_manager")
     @patch("ccgram.bot.config")
-    @patch("ccgram.bot.detect_provider_from_command")
+    @patch("ccgram.bot.detect_provider_from_pane", new_callable=AsyncMock)
     async def test_skips_detection_when_window_not_found(
         self,
         mock_detect: MagicMock,
@@ -174,7 +194,9 @@ class TestHandleNewWindowAutoDetection:
     @patch("ccgram.bot.tmux_manager")
     @patch("ccgram.bot.session_manager")
     @patch("ccgram.bot.config")
-    @patch("ccgram.bot.detect_provider_from_command", return_value="")
+    @patch(
+        "ccgram.bot.detect_provider_from_pane", new_callable=AsyncMock, return_value=""
+    )
     async def test_detects_gemini_from_pane_title_when_command_is_bun(
         self,
         mock_detect: MagicMock,
@@ -201,14 +223,16 @@ class TestHandleNewWindowAutoDetection:
 
         await _handle_new_window(event, bot)
 
-        mock_detect.assert_called_once_with("bun")
+        mock_detect.assert_awaited_once()
         mock_tmux.get_pane_title.assert_awaited_once_with("@8")
         mock_sm.set_window_provider.assert_called_once_with("@8", "gemini")
 
     @patch("ccgram.bot.tmux_manager")
     @patch("ccgram.bot.session_manager")
     @patch("ccgram.bot.config")
-    @patch("ccgram.bot.detect_provider_from_command", return_value="")
+    @patch(
+        "ccgram.bot.detect_provider_from_pane", new_callable=AsyncMock, return_value=""
+    )
     async def test_does_not_detect_gemini_from_generic_working_text(
         self,
         mock_detect: MagicMock,
@@ -235,14 +259,16 @@ class TestHandleNewWindowAutoDetection:
 
         await _handle_new_window(event, bot)
 
-        mock_detect.assert_called_once_with("bun")
+        mock_detect.assert_awaited_once()
         mock_tmux.get_pane_title.assert_awaited_once_with("@10")
         mock_sm.set_window_provider.assert_not_called()
 
     @patch("ccgram.bot.tmux_manager")
     @patch("ccgram.bot.session_manager")
     @patch("ccgram.bot.config")
-    @patch("ccgram.bot.detect_provider_from_command", return_value="")
+    @patch(
+        "ccgram.bot.detect_provider_from_pane", new_callable=AsyncMock, return_value=""
+    )
     async def test_skips_provider_set_for_unrecognized_command(
         self,
         mock_detect: MagicMock,
@@ -268,7 +294,7 @@ class TestHandleNewWindowAutoDetection:
 
         await _handle_new_window(event, bot)
 
-        mock_detect.assert_called_once_with("bash")
+        mock_detect.assert_awaited_once()
         mock_sm.set_window_provider.assert_not_called()
 
 

@@ -41,14 +41,10 @@ class Config:
 
         # Load .env: local (cwd) takes priority over config_dir
         # load_dotenv default override=False means first-loaded wins
-        local_env = Path(".env")
-        global_env = self.config_dir / ".env"
-        if local_env.is_file():
-            load_dotenv(local_env)
-            logger.debug("Loaded env from %s", local_env.resolve())
-        if global_env.is_file():
-            load_dotenv(global_env)
-            logger.debug("Loaded env from %s", global_env)
+        for env_path in (Path(".env"), self.config_dir / ".env"):
+            if env_path.is_file():
+                load_dotenv(env_path)
+                logger.debug("Loaded env from %s", env_path.resolve())
 
         self.telegram_bot_token: str = os.getenv("TELEGRAM_BOT_TOKEN") or ""
         if not self.telegram_bot_token:
@@ -140,6 +136,21 @@ class Config:
         self.whisper_language: str = _env_with_fallback(
             "CCGRAM_WHISPER_LANGUAGE", "CCBOT_WHISPER_LANGUAGE"
         )
+
+        # LLM command generation (shell provider)
+        self.prompt_marker: str = os.getenv("CCGRAM_PROMPT_MARKER", "ccgram")
+        self.llm_provider: str = os.getenv("CCGRAM_LLM_PROVIDER", "")
+        self.llm_api_key: str = os.getenv("CCGRAM_LLM_API_KEY", "")
+        self.llm_base_url: str = os.getenv("CCGRAM_LLM_BASE_URL", "")
+        self.llm_model: str = os.getenv("CCGRAM_LLM_MODEL", "")
+        try:
+            self.llm_temperature: float = float(
+                os.getenv("CCGRAM_LLM_TEMPERATURE", "0.1")
+            )
+        except ValueError as e:
+            raise ValueError(
+                f"CCGRAM_LLM_TEMPERATURE must be a valid number: {e}"
+            ) from e
 
         # Auto-close stale topics (minutes; 0 = disabled)
         self.autoclose_done_minutes = int(os.getenv("AUTOCLOSE_DONE_MINUTES", "30"))

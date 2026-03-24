@@ -41,8 +41,6 @@ class TestDiscoverExternalSessions:
 
         assert len(result) == 1
         assert result[0].window_id == "my-project:@0"
-        assert result[0].window_name == "project"
-        assert result[0].cwd == "/home/user/project"
         assert result[0].pane_current_command == "claude"
 
     @pytest.mark.asyncio

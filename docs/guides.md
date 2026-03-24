@@ -120,6 +120,11 @@ All settings accept both CLI flags and environment variables. CLI flags take pre
 | `CCGRAM_WHISPER_BASE_URL` / `--whisper-base-url` | _(provider default)_ | Custom OpenAI-compatible endpoint URL                         |
 | `CCGRAM_WHISPER_MODEL` / `--whisper-model`       | _(provider default)_ | Model override (e.g., `whisper-large-v3-turbo`)               |
 | `CCGRAM_WHISPER_LANGUAGE` / `--whisper-language` | _(auto-detect)_      | Force language code (e.g., `en`, `zh`)                        |
+| `CCGRAM_LLM_PROVIDER`                            | _(empty = disabled)_ | LLM provider for shell command generation                     |
+| `CCGRAM_LLM_API_KEY`                             | _(empty)_            | API key for LLM provider (env only)                           |
+| `CCGRAM_LLM_BASE_URL`                            | _(from provider)_    | Custom LLM API endpoint                                       |
+| `CCGRAM_LLM_MODEL`                               | _(from provider)_    | LLM model override                                            |
+| `CCGRAM_LLM_TEMPERATURE`                         | `0.1`                | LLM sampling temperature (0 = deterministic)                  |
 
 ## Voice Message Transcription
 
@@ -264,108 +269,9 @@ When an agent session exits or crashes, the bot detects the dead window and offe
 
 The buttons shown adapt to each provider's capabilities. All three providers (Claude, Codex, Gemini) support Fresh, Continue, and Resume.
 
-## Provider Support
+## Providers
 
-CCGram supports multiple agent CLI backends. Each Telegram topic can use a different provider — you choose when creating a session via the directory browser.
-
-### Supported Providers
-
-| Provider    | CLI Command | Hook Events | Status Detection                                          |
-| ----------- | ----------- | ----------- | --------------------------------------------------------- |
-| Claude Code | `claude`    | Yes         | Hook events + pyte VT100 + spinner                        |
-| Codex CLI   | `codex`     | No          | pyte VT100 interactive UI + transcript activity heuristic |
-| Gemini CLI  | `gemini`    | No          | Pane title + interactive UI                               |
-
-### Choosing a Provider
-
-**From Telegram**: When you create a new topic and select a directory, a provider picker appears with Claude (default), Codex, and Gemini options. After provider selection, CCGram asks for session mode:
-
-- `✅ Standard` (normal approvals)
-- `🚀 YOLO` (provider-specific permissive mode)
-
-**From the terminal**: If you create a tmux window manually and start an agent CLI, CCGram auto-detects the provider from the running process name. For Gemini sessions launched via bun/node wrappers, it also checks Gemini pane-title symbols (`✦`, `✋`, `◇`).
-
-**Default provider**: Set `CCGRAM_PROVIDER=codex` (or `gemini`) to change the default. Claude is the default if unset.
-
-### Session Mode (Standard vs YOLO)
-
-CCGram stores mode per window and reuses it for recover/continue/resume flows.
-
-- `normal` mode launches the provider command as-is.
-- `yolo` mode appends the provider-native permissive flag:
-  - Claude: `--dangerously-skip-permissions`
-  - Codex: `--dangerously-bypass-approvals-and-sandbox`
-  - Gemini: `--yolo`
-
-YOLO sessions are indicated in Telegram topic titles with a `🚀` badge and in `/sessions` with a `[YOLO]` tag. When Remote Control is active, a `📡` badge also appears in the topic title.
-
-### Provider Differences
-
-**Claude Code** has the richest integration — hook events (SessionStart, Notification, Stop, StopFailure, SessionEnd, SubagentStart, SubagentStop, TeammateIdle, TaskCompleted) provide instant session tracking, interactive UI detection, done/idle detection, API error alerting, session lifecycle cleanup, subagent activity monitoring, and agent team notifications. The bot also detects Remote Control mode (📡 topic badge + one-tap activation button) and uses a pyte VT100 screen buffer as fallback for terminal status parsing. Multi-pane windows (e.g. from agent teams) are automatically scanned for blocked panes and surfaced as inline keyboard alerts.
-
-**Codex CLI** and **Gemini CLI** lack a session hook, so session tracking relies on hookless transcript discovery plus provider detection. Codex interactive prompts (question lists, permission prompts, and other selection UIs) are detected from terminal screen content via pyte and shown with inline keyboard controls. For edit-approval prompts, CCGram reformats dense terminal diffs into a compact summary with a short preview while keeping the Yes/No confirmation choices and bottom action hints intact. Gemini sets pane titles (`Working: ✦`, `Action Required: ✋`, `Ready: ◇`) that CCGram reads for status, and its `@inquirer/select` permission prompts are detected as interactive UI. Gemini transcript discovery matches project hash/alias only (no cross-project full scan) to avoid wrong-session attachment.
-
-### Codex Edit Approval Formatting
-
-When Codex asks for approval on file edits, terminal output can include dense side-by-side diff lines that are hard to read in Telegram. CCGram reformats that content before sending the interactive prompt:
-
-- Keeps the approval controls and action hints intact (`Yes/No`, `Press enter`, `Esc`).
-- Adds a compact summary (`File`, `Changes: +N -M`).
-- Adds a short preview of parsed changed lines when available.
-- Omits unreadable wrapped diff blobs instead of forwarding noisy raw text.
-
-Typical output shape:
-
-```text
-Do you want to make this edit to src/ccgram/example.py?
-File: src/ccgram/example.py
-Changes: +1 -1
-Preview:
-  - return old_value
-  + return new_value
-
-› 1. Yes, proceed (y)
-  2. Yes, and don't ask again for these files (a)
-  3. No, and tell Codex what to do differently (esc)
-Press enter to confirm or esc to cancel
-```
-
-### Custom Launch Commands
-
-Override the CLI command used to launch each provider via `CCGRAM_<NAME>_COMMAND` env vars:
-
-```ini
-CCGRAM_CLAUDE_COMMAND=ce --current
-CCGRAM_CODEX_COMMAND=my-codex-wrapper
-CCGRAM_GEMINI_COMMAND=/opt/gemini/run
-```
-
-`<NAME>` is uppercase: `CLAUDE`, `CODEX`, `GEMINI`. Defaults to the provider's built-in command (`claude`, `codex`, `gemini`) when unset. New providers automatically support `CCGRAM_<NAME>_COMMAND` without code changes.
-
-You can use this for a global "today" setup (all new sessions), for example:
-
-```ini
-CCGRAM_CLAUDE_COMMAND=claude --dangerously-skip-permissions
-CCGRAM_CODEX_COMMAND=codex --dangerously-bypass-approvals-and-sandbox
-CCGRAM_GEMINI_COMMAND=gemini --yolo
-```
-
-For ccgram-managed Gemini launches, CCGram also injects
-`GEMINI_CLI_SYSTEM_SETTINGS_PATH=~/.ccgram/gemini-system-settings.json` with
-`tools.shell.enableInteractiveShell=false` to avoid node-pty `EBADF` crashes in
-tmux. If you set `CCGRAM_GEMINI_COMMAND`, your override is used as-is.
-
-### Provider-Specific Commands
-
-Each provider exposes its own slash commands to the Telegram menu. Examples:
-
-- **Claude**: `/clear`, `/compact`, `/cost`, `/doctor`, `/permissions`...
-- **Codex**: `/model`, `/mode`, `/status`, `/diff`, `/compact`, `/mcp`...
-- **Gemini**: `/chat`, `/clear`, `/compress`, `/model`, `/memory`, `/vim`...
-
-For Codex, `/status` now sends a transcript-based fallback snapshot in Telegram
-(session/cwd/token/rate-limit summary) because some Codex builds render status
-in the terminal UI without emitting a transcript assistant message.
+CCGram supports Claude Code, Codex CLI, Gemini CLI, and Shell. Each topic can use a different provider. See **[docs/providers.md](providers.md)** for full details on each provider, session modes, custom launch commands, LLM configuration, and provider-specific behavior.
 
 ## Data Storage
 

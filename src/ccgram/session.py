@@ -22,6 +22,7 @@ Key methods for thread binding access:
 """
 
 import asyncio
+import fcntl
 import json
 import structlog
 from dataclasses import dataclass, field
@@ -1005,12 +1006,53 @@ class SessionManager:
 
         Always saves state unconditionally. When *cwd* is provided, persists it
         in the same write so provider/cwd updates stay atomic.
+
+        When switching to a hookless provider (e.g. shell), clears any stale
+        session_map.json entry and session_id so hook-based data from a
+        previous provider doesn't cause provider detection flickering.
         """
         state = self.get_window_state(window_id)
+        old_provider = state.provider_name
         state.provider_name = provider_name
         if cwd:
             state.cwd = cwd
+
+        # When switching away from a hook-based provider to a hookless one,
+        # clear stale session data that would otherwise cause the poll loop
+        # to re-detect the old provider from session_map.json.
+        if old_provider != provider_name and provider_name:
+            from .providers import registry
+
+            new_prov = registry.get(provider_name)
+            if not new_prov.capabilities.supports_hook:
+                if state.session_id:
+                    state.session_id = ""
+                    state.transcript_path = ""
+                self._clear_session_map_entry(window_id)
+
         self._save_state()
+
+    def _clear_session_map_entry(self, window_id: str) -> None:
+        """Remove a window's entry from session_map.json if present."""
+        if not config.session_map_file.exists():
+            return
+        lock_path = config.session_map_file.with_suffix(".lock")
+        try:
+            with open(lock_path, "w") as lock_f:
+                fcntl.flock(lock_f, fcntl.LOCK_EX)
+                try:
+                    raw = json.loads(config.session_map_file.read_text())
+                    key = f"{config.tmux_session_name}:{window_id}"
+                    if key in raw:
+                        del raw[key]
+                        atomic_write_json(config.session_map_file, raw)
+                        logger.debug("Cleared session_map entry for %s", window_id)
+                except (json.JSONDecodeError, OSError):  # fmt: skip
+                    return
+                finally:
+                    fcntl.flock(lock_f, fcntl.LOCK_UN)
+        except OSError:
+            logger.debug("Failed to lock session_map for clearing %s", window_id)
 
     def get_approval_mode(self, window_id: str) -> str:
         """Get approval mode for a window (default: 'normal')."""
@@ -1471,7 +1513,9 @@ class SessionManager:
 
     # --- Tmux helpers ---
 
-    async def send_to_window(self, window_id: str, text: str) -> tuple[bool, str]:
+    async def send_to_window(
+        self, window_id: str, text: str, *, raw: bool = False
+    ) -> tuple[bool, str]:
         """Send text to a tmux window by ID."""
         display = self.get_display_name(window_id)
         logger.debug(
@@ -1483,7 +1527,7 @@ class SessionManager:
         window = await tmux_manager.find_window_by_id(window_id)
         if not window:
             return False, "Window not found (may have been closed)"
-        success = await tmux_manager.send_keys(window.window_id, text)
+        success = await tmux_manager.send_keys(window.window_id, text, raw=raw)
         if success:
             return True, f"Sent to {display}"
         return False, "Failed to send keys"
