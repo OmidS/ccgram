@@ -2,7 +2,9 @@
 
 Passive monitoring detects commands run in tmux (both via Telegram and typed
 directly) and relays output to the corresponding Telegram topic.  Uses prompt
-markers (ccgram:N❯) for output isolation and exit code detection.
+markers for output isolation and exit code detection.  In *wrap* mode the
+marker is ``⌘N⌘`` appended to the user's existing prompt; in *replace* mode
+it is ``{prefix}:N❯`` replacing the entire prompt.
 
 When a command originates from Telegram, the monitor state is annotated with
 ``mark_telegram_command`` so that non-zero exit codes trigger LLM-based error
@@ -23,7 +25,7 @@ from dataclasses import dataclass
 
 from telegram import Bot
 
-from ..providers.shell import get_prompt_re
+from ..providers.shell import match_prompt
 from ..session import session_manager
 from .message_sender import edit_with_fallback, rate_limit_send_message
 
@@ -124,19 +126,19 @@ def strip_terminal_glyphs(text: str) -> str:
 def _extract_command_output(current: str) -> _CommandOutput:
     """Extract command output and exit code from terminal capture.
 
-    Uses prompt-marker extraction (ccgram:N❯ lines).  Returns empty
+    Uses prompt-marker extraction via ``match_prompt()``.  Returns empty
     output when no markers are found.
     """
     lines = current.rstrip().splitlines()
     if not lines:
         return _CommandOutput(text="")
 
-    # Scan from bottom (last 10 lines only) for bare prompt: ccgram:N❯
+    # Scan from bottom (last 10 lines only) for bare prompt (no command text)
     scan_start = max(0, len(lines) - 10)
     end_idx = None
     exit_code = None
     for i in range(len(lines) - 1, scan_start - 1, -1):
-        m = get_prompt_re().match(lines[i])
+        m = match_prompt(lines[i])
         if m and not m.group(2).strip():
             end_idx = i
             exit_code = int(m.group(1))
@@ -145,10 +147,10 @@ def _extract_command_output(current: str) -> _CommandOutput:
     if end_idx is None:
         return _CommandOutput(text="")
 
-    # Scan upward for command echo: ccgram:N❯ <command text>
+    # Scan upward for command echo (prompt marker with command text)
     start_idx = None
     for i in range(end_idx - 1, -1, -1):
-        m = get_prompt_re().match(lines[i])
+        m = match_prompt(lines[i])
         if m and m.group(2).strip():
             start_idx = i
             break
@@ -168,10 +170,10 @@ def _find_command_echo(lines: list[str]) -> tuple[str, int] | None:
     """
     scan_start = max(0, len(lines) - 10)
     for i in range(len(lines) - 1, scan_start - 1, -1):
-        m = get_prompt_re().match(lines[i])
+        m = match_prompt(lines[i])
         if m and not m.group(2).strip():
             for j in range(i - 1, -1, -1):
-                mj = get_prompt_re().match(lines[j])
+                mj = match_prompt(lines[j])
                 if mj and mj.group(2).strip():
                     return (lines[j], j)
             return None
@@ -181,7 +183,7 @@ def _find_command_echo(lines: list[str]) -> tuple[str, int] | None:
 def _find_in_progress(lines: list[str]) -> _PassiveOutput | None:
     """Find in-progress command output (no bare prompt at bottom)."""
     for i in range(len(lines) - 1, -1, -1):
-        m = get_prompt_re().match(lines[i])
+        m = match_prompt(lines[i])
         if m and m.group(2).strip():
             output_lines = lines[i + 1 :]
             while output_lines and not output_lines[-1].strip():
@@ -207,7 +209,7 @@ def _extract_passive_output(text: str) -> _PassiveOutput | None:
 
     # Check bottom 10 lines for any prompt marker
     tail = lines[max(0, len(lines) - 10) :]
-    if not any(get_prompt_re().match(line) for line in tail):
+    if not any(match_prompt(line) for line in tail):
         return None
 
     # Try completed-command extraction (bare prompt at bottom)
@@ -398,7 +400,7 @@ def _has_markers_in_tail(rendered_text: str) -> bool:
     """
     lines = rendered_text.rstrip().splitlines()
     tail = lines[max(0, len(lines) - 10) :]
-    return any(get_prompt_re().match(line.lstrip()) for line in tail)
+    return any(match_prompt(line.lstrip()) for line in tail)
 
 
 async def check_passive_shell_output(
@@ -454,9 +456,9 @@ async def check_passive_shell_output(
 def _command_from_echo(echo: str) -> str:
     """Extract the command text from a prompt echo line.
 
-    ``"ccgram:0❯ ls -al"`` → ``"ls -al"``
+    ``"~/code ⌘0⌘ ls -al"`` → ``"ls -al"`` (wrap mode).
     """
-    m = get_prompt_re().match(echo)
+    m = match_prompt(echo)
     return m.group(2).strip() if m else echo
 
 

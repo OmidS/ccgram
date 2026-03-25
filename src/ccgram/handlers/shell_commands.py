@@ -127,7 +127,7 @@ async def _cancel_stuck_input(window_id: str) -> None:
     LLM-generated malformed commands that leave the shell in multi-line
     input mode (e.g. unclosed ``begin`` block in fish).
     """
-    from ..providers.shell import KNOWN_SHELLS, get_prompt_re
+    from ..providers.shell import KNOWN_SHELLS, match_prompt
 
     # Step 1: check if the shell itself is the foreground process.
     # If a command is running (python, grep, etc.), don't interrupt it.
@@ -150,7 +150,7 @@ async def _cancel_stuck_input(window_id: str) -> None:
         return
 
     last = lines[-1]
-    m = get_prompt_re().match(last)
+    m = match_prompt(last)
     if m and not m.group(2).strip():
         return  # clean bare prompt — all good
 

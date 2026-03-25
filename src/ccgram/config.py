@@ -138,6 +138,7 @@ class Config:
         )
 
         # LLM command generation (shell provider)
+        self.prompt_mode: str = os.getenv("CCGRAM_PROMPT_MODE", "wrap")
         self.prompt_marker: str = os.getenv("CCGRAM_PROMPT_MARKER", "ccgram")
         self.llm_provider: str = os.getenv("CCGRAM_LLM_PROVIDER", "")
         self.llm_api_key: str = os.getenv("CCGRAM_LLM_API_KEY", "")

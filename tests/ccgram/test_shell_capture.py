@@ -1044,3 +1044,130 @@ class TestMaybeSuggestFix:
             )
 
         mock_send.assert_not_called()
+
+
+# ── Wrap-mode tests ──────────────────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("_wrap_mode")
+class TestWrapModeExtraction:
+    def test_extract_completed_command(self) -> None:
+        pane = "~/code main ❯ ⌘0⌘ ls\nfile1.txt\nfile2.txt\n~/code main ❯ ⌘0⌘"
+        result = _extract_command_output(pane)
+        assert result.text == "file1.txt\nfile2.txt"
+        assert result.exit_code == 0
+
+    def test_extract_failed_command(self) -> None:
+        pane = "~/code main ❯ ⌘0⌘ bad-cmd\nerror: not found\n~/code main ❯ ⌘127⌘"
+        result = _extract_command_output(pane)
+        assert result.text == "error: not found"
+        assert result.exit_code == 127
+
+    def test_idle_returns_exit_code_only(self) -> None:
+        pane = "~/code main ❯ ⌘0⌘"
+        result = _extract_command_output(pane)
+        assert result.exit_code == 0
+        assert result.text == ""
+
+    def test_no_markers_returns_empty(self) -> None:
+        pane = "~/code main ❯ ls"
+        result = _extract_command_output(pane)
+        assert result.exit_code is None
+        assert result.text == ""
+
+    def test_still_running_no_bare_prompt(self) -> None:
+        pane = "~/code main ❯ ⌘0⌘ long-cmd\npartial output"
+        result = _extract_command_output(pane)
+        assert result.exit_code is None
+
+
+@pytest.mark.usefixtures("_wrap_mode")
+class TestWrapModeFindCommandEcho:
+    def test_finds_echo_above_bare_prompt(self) -> None:
+        from ccgram.handlers.shell_capture import _find_command_echo
+
+        lines = [
+            "~/code main ❯ ⌘0⌘ ls",
+            "file1.txt",
+            "~/code main ❯ ⌘0⌘",
+        ]
+        assert _find_command_echo(lines) == ("~/code main ❯ ⌘0⌘ ls", 0)
+
+    def test_returns_none_for_idle(self) -> None:
+        from ccgram.handlers.shell_capture import _find_command_echo
+
+        lines = ["~/code main ❯ ⌘0⌘"]
+        assert _find_command_echo(lines) is None
+
+
+@pytest.mark.usefixtures("_wrap_mode")
+class TestWrapModeFindInProgress:
+    def test_finds_running_command(self) -> None:
+        from ccgram.handlers.shell_capture import _find_in_progress
+
+        lines = ["~/code main ❯ ⌘0⌘ tail -f log", "line1", "line2"]
+        result = _find_in_progress(lines)
+        assert result is not None
+        assert result.echo_index == 0
+        assert result.text == "line1\nline2"
+        assert result.exit_code is None
+
+    def test_returns_none_for_bare_prompt(self) -> None:
+        from ccgram.handlers.shell_capture import _find_in_progress
+
+        lines = ["~/code main ❯ ⌘0⌘"]
+        assert _find_in_progress(lines) is None
+
+
+@pytest.mark.usefixtures("_wrap_mode")
+class TestWrapModePassiveOutput:
+    def test_completed_command(self) -> None:
+        from ccgram.handlers.shell_capture import _extract_passive_output
+
+        pane = "~/code main ❯ ⌘0⌘ ls\nfile1.txt\n~/code main ❯ ⌘0⌘"
+        result = _extract_passive_output(pane)
+        assert result is not None
+        assert result.text == "file1.txt"
+        assert result.exit_code == 0
+
+    def test_idle_returns_none(self) -> None:
+        from ccgram.handlers.shell_capture import _extract_passive_output
+
+        assert _extract_passive_output("~/code main ❯ ⌘0⌘") is None
+
+    def test_in_progress_command(self) -> None:
+        from ccgram.handlers.shell_capture import _extract_passive_output
+
+        pane = "~/code main ❯ ⌘0⌘ tail -f log\nline1\nline2"
+        result = _extract_passive_output(pane)
+        assert result is not None
+        assert result.text == "line1\nline2"
+        assert result.exit_code is None
+
+
+@pytest.mark.usefixtures("_wrap_mode")
+class TestWrapModeCommandFromEcho:
+    def test_extracts_command_text(self) -> None:
+        from ccgram.handlers.shell_capture import _command_from_echo
+
+        assert _command_from_echo("~/code main ❯ ⌘0⌘ ls -al") == "ls -al"
+
+    def test_non_matching_returns_input(self) -> None:
+        from ccgram.handlers.shell_capture import _command_from_echo
+
+        assert _command_from_echo("$ ls") == "$ ls"
+
+
+@pytest.mark.usefixtures("_wrap_mode")
+class TestWrapModeHasMarkersInTail:
+    def test_marker_at_end(self) -> None:
+        from ccgram.handlers.shell_capture import _has_markers_in_tail
+
+        text = "file1.txt\nfile2.txt\n~/code main ❯ ⌘0⌘"
+        assert _has_markers_in_tail(text) is True
+
+    def test_no_markers(self) -> None:
+        from ccgram.handlers.shell_capture import _has_markers_in_tail
+
+        text = "file1.txt\nfile2.txt\n~/code main ❯ "
+        assert _has_markers_in_tail(text) is False
