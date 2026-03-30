@@ -460,13 +460,13 @@ Install messaging skill prompt to Claude Code agents so they check inbox on idle
 
 Ensure agents can identify their own window ID for CLI operations.
 
-- [ ] write tests for self-identification: env var present → use it; absent → tmux fallback; outside tmux → error
-- [ ] implement in `msg_cmd.py`:
+- [x] write tests for self-identification: env var present → use it; absent → tmux fallback; outside tmux → error
+- [x] implement in `msg_cmd.py`:
   - `get_my_window_id()` → reads `CCGRAM_WINDOW_ID` env var (primary)
   - Fallback: `tmux display-message -p -t $TMUX_PANE '#{window_id}'`
   - Error if neither works (not in tmux)
-- [ ] set `CCGRAM_WINDOW_ID` env var when ccgram creates tmux windows (extend `tmux_manager.create_window()`)
-- [ ] run `make fmt && make test && make lint` — must pass
+- [x] set `CCGRAM_WINDOW_ID` env var when ccgram creates tmux windows (extend `tmux_manager.create_window()`)
+- [x] run `make fmt && make test && make lint` — must pass
 
 ### Task 11: Verify acceptance criteria
 

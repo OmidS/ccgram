@@ -284,3 +284,19 @@ async def test_ansi_capture_through_pyte(tmux, tmp_path) -> None:
     rendered = buf.rendered_text
     assert "bold text" in rendered
     assert "\x1b" not in rendered
+
+
+async def test_create_window_sets_ccgram_window_id(tmux, tmp_path) -> None:
+    ok, _msg, _name, window_id = await tmux.create_window(
+        str(tmp_path), window_name="env-test", start_agent=False
+    )
+    assert ok
+
+    await asyncio.sleep(0.5)
+    await tmux.send_keys(window_id, "echo $CCGRAM_WINDOW_ID")
+    await asyncio.sleep(0.5)
+
+    output = await tmux.capture_pane(window_id)
+    assert output is not None
+    expected = f"{TEST_SESSION}:{window_id}"
+    assert expected in output

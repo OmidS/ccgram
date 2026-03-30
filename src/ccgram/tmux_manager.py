@@ -989,6 +989,18 @@ class TmuxManager:
                     return pane
         return None
 
+    @staticmethod
+    def _start_agent_in_pane(
+        pane: libtmux.Pane,
+        launch_command: str,
+        agent_args: str,
+    ) -> None:
+        """Send launch command to pane, appending agent_args if provided."""
+        cmd = launch_command
+        if agent_args:
+            cmd = f"{cmd} {agent_args}"
+        pane.send_keys(cmd, enter=True)
+
     async def create_window(
         self,
         work_dir: str,
@@ -1038,21 +1050,20 @@ class TmuxManager:
                 )
 
                 new_window_id = window.window_id or ""
+                pane = window.active_pane
 
-                # Disable automatic-rename for windows without an agent CLI
-                # (plain shell). Tmux auto-renames based on the current process,
-                # which causes topic emoji flickering as the display name changes.
+                # Set CCGRAM_WINDOW_ID so agents can self-identify
+                qualified_id = f"{self.session_name}:{new_window_id}"
+                if pane and new_window_id:
+                    pane.send_keys(
+                        f"export CCGRAM_WINDOW_ID={qualified_id}",
+                        enter=True,
+                    )
+
                 if not (start_agent and launch_command):
                     window.set_option("automatic-rename", "off")
-
-                # Start agent CLI if requested
-                if start_agent and launch_command:
-                    pane = window.active_pane
-                    if pane:
-                        cmd = launch_command
-                        if agent_args:
-                            cmd = f"{cmd} {agent_args}"
-                        pane.send_keys(cmd, enter=True)
+                elif pane:
+                    self._start_agent_in_pane(pane, launch_command, agent_args)
 
                 logger.info(
                     "Created window '%s' (id=%s) at %s",

@@ -550,6 +550,38 @@ class TestWindowSelfIdentification:
         assert result.exit_code == 0
         assert "ccgram:@5" in result.output
 
+    def test_tmux_fallback(
+        self,
+        runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+        mailbox: Mailbox,
+    ):
+        monkeypatch.delenv("CCGRAM_WINDOW_ID", raising=False)
+        monkeypatch.setenv("TMUX_PANE", "%5")
+        monkeypatch.setattr("ccgram.msg_cmd.tmux_session_name", lambda: "myses")
+        mock_result = type("R", (), {"returncode": 0, "stdout": "@3\n"})()
+        with patch("ccgram.msg_cmd.subprocess.run", return_value=mock_result):
+            mailbox.send(
+                from_id="ccgram:@1",
+                to_id="myses:@3",
+                body="hello via tmux fallback",
+                msg_type="request",
+            )
+            result = runner.invoke(cli, ["msg", "inbox"])
+        assert result.exit_code == 0
+        assert "ccgram:@1" in result.output
+
+    def test_tmux_fallback_failure(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.delenv("CCGRAM_WINDOW_ID", raising=False)
+        monkeypatch.setenv("TMUX_PANE", "%5")
+        mock_result = type("R", (), {"returncode": 1, "stdout": ""})()
+        with patch("ccgram.msg_cmd.subprocess.run", return_value=mock_result):
+            result = runner.invoke(cli, ["msg", "inbox"])
+        assert result.exit_code != 0
+        assert "could not detect window ID" in result.output
+
     def test_no_env_no_tmux_fails(
         self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
     ):
