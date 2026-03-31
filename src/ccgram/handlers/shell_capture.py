@@ -28,6 +28,7 @@ from telegram import Bot
 from ..providers.shell import match_prompt
 from ..thread_router import thread_router
 from .message_sender import edit_with_fallback, rate_limit_send_message
+from .topic_state_registry import topic_state
 
 logger = structlog.get_logger()
 
@@ -383,6 +384,7 @@ async def _maybe_suggest_fix(
 # and typed directly). Requires prompt markers for reliable extraction.
 
 
+@topic_state.register("window")
 def clear_shell_monitor_state(window_id: str) -> None:
     """Remove monitor state for a window (cleanup / provider switch)."""
     _shell_monitor_state.pop(window_id, None)

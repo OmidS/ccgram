@@ -26,6 +26,7 @@ import os
 
 import structlog
 
+from ..handlers.topic_state_registry import topic_state
 from .shell import KNOWN_SHELLS as _KNOWN_SHELLS
 
 logger = structlog.get_logger()
@@ -200,6 +201,7 @@ async def detect_provider_cached(window_id: str, tty_path: str) -> str:
     return provider
 
 
+@topic_state.register("window")
 def clear_detection_cache(window_id: str | None = None) -> None:
     """Clear cached detection for a window, or all windows if None."""
     if window_id is None:

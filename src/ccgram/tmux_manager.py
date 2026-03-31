@@ -28,6 +28,7 @@ import libtmux
 from libtmux.exc import LibTmuxException
 
 from .config import config
+from .handlers.topic_state_registry import topic_state
 from .providers import detect_provider_from_command
 from .window_resolver import EMDASH_SESSION_PREFIX as _EMDASH_PREFIX, is_foreign_window
 
@@ -56,6 +57,7 @@ def notify_vim_insert_seen(window_id: str) -> None:
     _vim_state[window_id] = True
 
 
+@topic_state.register("window")
 def clear_vim_state(window_id: str) -> None:
     """Remove vim state cache entry and lock for a window (called on cleanup)."""
     _vim_state.pop(window_id, None)

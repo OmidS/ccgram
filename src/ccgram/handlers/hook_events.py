@@ -16,6 +16,7 @@ from telegram import Bot
 
 from ..session import session_manager
 from ..thread_router import thread_router
+from .topic_state_registry import topic_state
 
 logger = structlog.get_logger()
 
@@ -166,6 +167,7 @@ def build_subagent_label(names: list[str]) -> str | None:
     return f"\U0001f916 {len(names)} subagents: {joined}"
 
 
+@topic_state.register("window")
 def clear_subagents(window_id: str) -> None:
     """Clear all subagent tracking for a window."""
     _active_subagents.pop(window_id, None)

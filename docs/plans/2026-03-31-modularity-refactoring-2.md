@@ -354,12 +354,12 @@ Migrate modules that use `(user_id, thread_id)` key. After each migration, remov
 
 Migrate modules that use `window_id` key.
 
-- [ ] `handlers/polling_strategies.py`: register `clear_window_poll_state`, `clear_pane_alerts` with `@topic_state.register("window")`; register `clear_dead_notification`, `clear_topic_poll_state` with `@topic_state.register("topic")`; remove 4 from `cleanup.py`
-- [ ] `handlers/shell_capture.py`: register `clear_shell_monitor_state` with `@topic_state.register("window")`; remove from `cleanup.py`
-- [ ] `handlers/hook_events.py`: register `clear_subagents` with `@topic_state.register("window")`; remove from `cleanup.py`
-- [ ] `providers/process_detection.py`: register `clear_detection_cache` with `@topic_state.register("window")`; remove from `cleanup.py`
-- [ ] `tmux_manager.py`: register `clear_vim_state` with `@topic_state.register("window")`; remove from `cleanup.py`
-- [ ] `make check` — must pass
+- [x] `handlers/polling_strategies.py`: register `clear_window_poll_state`, `clear_pane_alerts` with `@topic_state.register("window")`; register `clear_dead_notification`, `clear_topic_poll_state` with `@topic_state.register("topic")`; remove 4 from `cleanup.py`
+- [x] `handlers/shell_capture.py`: register `clear_shell_monitor_state` with `@topic_state.register("window")`; remove from `cleanup.py`
+- [x] `handlers/hook_events.py`: register `clear_subagents` with `@topic_state.register("window")`; remove from `cleanup.py`
+- [x] `providers/process_detection.py`: register `clear_detection_cache` with `@topic_state.register("window")`; remove from `cleanup.py`
+- [x] `tmux_manager.py`: register `clear_vim_state` with `@topic_state.register("window")`; remove from `cleanup.py`
+- [x] `make check` — must pass
 
 #### Task 9d: Migrate handlers to self-register (batch 3 — chat + qualified scoped)
 

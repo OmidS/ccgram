@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..providers.base import StatusUpdate
+from .topic_state_registry import topic_state
 
 if TYPE_CHECKING:
     from ..screen_buffer import ScreenBuffer
@@ -494,6 +495,7 @@ lifecycle_strategy = TopicLifecycleStrategy(terminal_strategy)
 # Thin delegates so consumers don't need to know about strategy internals.
 
 
+@topic_state.register("window")
 def clear_window_poll_state(window_id: str) -> None:
     """Remove all polling state for a window."""
     terminal_strategy.clear_state(window_id)
@@ -515,6 +517,7 @@ def is_rc_active(window_id: str) -> bool:
     return terminal_strategy.is_rc_active(window_id)
 
 
+@topic_state.register("topic")
 def clear_topic_poll_state(user_id: int, thread_id: int) -> None:
     """Remove all polling state for a topic."""
     lifecycle_strategy.clear_state(user_id, thread_id)
@@ -530,6 +533,7 @@ def reset_autoclose_state() -> None:
     lifecycle_strategy.reset_autoclose_state()
 
 
+@topic_state.register("topic")
 def clear_dead_notification(user_id: int, thread_id: int) -> None:
     """Remove dead notification tracking for a topic (called on cleanup)."""
     lifecycle_strategy.clear_dead_notification(user_id, thread_id)
@@ -575,6 +579,7 @@ def has_pane_alert(pane_id: str) -> bool:
     return interactive_strategy.has_pane_alert(pane_id)
 
 
+@topic_state.register("window")
 def clear_pane_alerts(window_id: str) -> None:
     """Remove pane alert state for a specific window only."""
     interactive_strategy.clear_pane_alerts(window_id)

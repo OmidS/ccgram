@@ -20,27 +20,22 @@ from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT, VOICE_PENDING
 
 
 def _clear_window_state(window_id: str, user_id: int, thread_id: int) -> None:
-    """Clear all state keyed by window_id or qualified_id."""
+    """Clear state keyed by window_id or qualified_id.
+
+    Window-scoped cleanups (vim, poll, pane alerts, subagents, shell monitor,
+    detection cache) are now handled by TopicStateRegistry. This function
+    retains only non-registerable cleanup (log throttle, mailbox I/O) and
+    qualified-scoped calls not yet migrated to the registry.
+    """
     from ..config import config
     from ..mailbox import Mailbox
     from ..msg_discovery import clear_declared
-    from ..providers.process_detection import clear_detection_cache
     from ..spawn_request import clear_spawn_state
-    from ..tmux_manager import clear_vim_state
     from ..window_resolver import is_foreign_window
-    from .hook_events import clear_subagents
     from .msg_delivery import clear_delivery_state
-    from .polling_strategies import clear_pane_alerts, clear_window_poll_state
-    from .shell_capture import clear_shell_monitor_state
 
-    clear_vim_state(window_id)
-    clear_window_poll_state(window_id)
-    clear_pane_alerts(window_id)
     log_throttle_reset(f"topic-probe:{window_id}")
     log_throttle_reset(f"status-update:{user_id}:{thread_id}")
-    clear_subagents(window_id)
-    clear_shell_monitor_state(window_id)
-    clear_detection_cache(window_id)
 
     qualified_id = (
         window_id
@@ -79,11 +74,6 @@ async def clear_topic_state(
             bot, user_id, window_id or "", None, thread_id=thread_id
         )
 
-    # Clear poll state (lazy import to avoid circular dep)
-    from .polling_strategies import clear_dead_notification, clear_topic_poll_state
-
-    clear_dead_notification(user_id, thread_id)
-    clear_topic_poll_state(user_id, thread_id)
     if window_id:
         _clear_window_state(window_id, user_id, thread_id)
 
