@@ -65,9 +65,9 @@ def _normalize_status(raw_status: str | None) -> str:
     if not raw_status:
         return "pending"
     normalized = raw_status.lower().strip()
-    if normalized == "completed":
+    if normalized in ("completed", "complete", "done", "finished"):
         return "completed"
-    if normalized == "in_progress":
+    if normalized in ("in_progress", "in-progress", "active"):
         return "in_progress"
     return "pending"
 
