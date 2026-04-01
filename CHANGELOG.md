@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-04-01
+
+### Added
+
+- Inter-agent messaging: `ccgram msg` CLI with file-based mailbox, peer discovery, rate limiting, loop detection, Telegram notifications, and agent spawn approval ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- Claude task board live in status bubble — renders TaskCreate tool output as a live task list in Telegram ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- Window self-identification via `CCGRAM_WINDOW_ID` env var set automatically on window creation ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- Messaging skill auto-installation for Claude Code agents ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- Agent spawning with Telegram approval flow ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- `Mailbox.broadcast()` for filtered multi-recipient messaging ([#48](https://github.com/alexei-led/ccgram/pull/48))
+
+### Refactored
+
+- SessionManager god object decomposed into focused modules: `thread_router`, `window_state_store`, `user_preferences`, `session_map`, `session_resolver` ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- Polling subsystem: `periodic_tasks`, `transcript_discovery`, `topic_lifecycle` extracted from polling_coordinator ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- TopicStateRegistry with self-registration pattern for automatic topic cleanup ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- `msg_delivery.py` extracted to break `msg_broker ↔ msg_telegram` circular dependency ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- `TerminalStatusStrategy` public API promoted; polling constants promoted to module-level ([#48](https://github.com/alexei-led/ccgram/pull/48))
+
+### Fixed
+
+- Crash recovery: re-inject stale pending messages instead of silently dropping them on bot restart ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- Flaky CI test: startup timeout uses relative `time.monotonic()` instead of hardcoded constant ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- `ImportError` now caught in `TopicStateRegistry._safe_call` so cleanup callbacks with deferred imports don't escape ([#48](https://github.com/alexei-led/ccgram/pull/48))
+- Task status normalization accepts `done`, `complete`, `in-progress`, `active` variants in addition to canonical values ([#48](https://github.com/alexei-led/ccgram/pull/48))
+
 ## [2.5.0] - 2026-03-30
 
 ### Refactored
