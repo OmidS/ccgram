@@ -22,7 +22,7 @@ from pathlib import Path
 
 import structlog
 
-from .handlers.topic_state_registry import topic_state
+from .topic_state_registry import topic_state
 from .utils import atomic_write_json, ccgram_dir
 
 logger = structlog.get_logger()

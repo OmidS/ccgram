@@ -21,7 +21,7 @@ import structlog
 from telegram import Bot
 from telegram.error import BadRequest, TelegramError
 
-from .topic_state_registry import topic_state
+from ..topic_state_registry import topic_state
 
 logger = structlog.get_logger()
 

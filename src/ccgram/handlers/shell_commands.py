@@ -44,7 +44,7 @@ from .callback_registry import register
 from .message_sender import safe_edit, safe_reply, safe_send
 from .message_queue import enqueue_status_update
 from .polling_strategies import clear_probe_failures
-from .topic_state_registry import topic_state
+from ..topic_state_registry import topic_state
 
 logger = structlog.get_logger()
 

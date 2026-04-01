@@ -16,7 +16,7 @@ from telegram import Bot
 
 from ..session import session_manager
 from ..thread_router import thread_router
-from .topic_state_registry import topic_state
+from ..topic_state_registry import topic_state
 
 logger = structlog.get_logger()
 
@@ -138,9 +138,9 @@ async def _handle_stop(event: HookEvent, bot: Bot) -> None:
         )
 
     # Trigger immediate broker delivery for the idle window
-    from .polling_coordinator import _run_broker_cycle
+    from .periodic_tasks import run_broker_cycle
 
-    await _run_broker_cycle(bot, idle_windows=frozenset({event.window_key}))
+    await run_broker_cycle(bot, idle_windows=frozenset({event.window_key}))
 
 
 # Track active subagents per window: window_id -> {subagent_id -> name}

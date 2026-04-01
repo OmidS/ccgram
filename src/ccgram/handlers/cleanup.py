@@ -43,7 +43,7 @@ async def clear_topic_state(
     from ..config import config
     from ..thread_router import thread_router
     from ..window_resolver import is_foreign_window
-    from .topic_state_registry import topic_state
+    from ..topic_state_registry import topic_state
 
     chat_id = thread_router.resolve_chat_id(user_id, thread_id)
 

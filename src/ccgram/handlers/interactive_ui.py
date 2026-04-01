@@ -25,7 +25,7 @@ from telegram.error import BadRequest, RetryAfter, TelegramError
 from ..providers import get_provider_for_window
 from ..thread_router import thread_router
 from ..tmux_manager import tmux_manager
-from .topic_state_registry import topic_state
+from ..topic_state_registry import topic_state
 from .callback_data import (
     CB_ASK_DOWN,
     CB_ASK_ENTER,

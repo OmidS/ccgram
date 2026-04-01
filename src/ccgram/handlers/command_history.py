@@ -12,7 +12,7 @@ Functions:
 
 from collections import deque
 
-from .topic_state_registry import topic_state
+from ..topic_state_registry import topic_state
 
 HISTORY_MAX = 20
 

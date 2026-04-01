@@ -12,8 +12,6 @@ Scopes:
   - chat: keyed by (chat_id, thread_id)
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 
 import structlog
@@ -27,9 +25,13 @@ class TopicStateRegistry:
     """Registry for per-topic / per-window cleanup functions."""
 
     def __init__(self) -> None:
-        self._cleanups: dict[str, list[Callable]] = {s: [] for s in _VALID_SCOPES}
+        self._cleanups: dict[str, list[Callable[..., None]]] = {
+            s: [] for s in _VALID_SCOPES
+        }
 
-    def register(self, scope: str) -> Callable:
+    def register(
+        self, scope: str
+    ) -> Callable[[Callable[..., None]], Callable[..., None]]:
         """Decorator that registers a cleanup function under *scope*.
 
         Deduplicates: the same function object is stored at most once per scope.

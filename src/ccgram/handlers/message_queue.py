@@ -28,7 +28,7 @@ import contextlib
 
 from ..session import session_manager
 from ..thread_router import thread_router
-from .topic_state_registry import topic_state
+from ..topic_state_registry import topic_state
 from ..utils import task_done_callback
 from .callback_data import (
     CB_STATUS_ESC,

@@ -26,7 +26,7 @@ import os
 
 import structlog
 
-from ..handlers.topic_state_registry import topic_state
+from ..topic_state_registry import topic_state
 from .shell import KNOWN_SHELLS as _KNOWN_SHELLS
 
 logger = structlog.get_logger()

@@ -16,7 +16,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 import structlog
 
-from .handlers.topic_state_registry import topic_state
+from .topic_state_registry import topic_state
 from .utils import atomic_write_json
 
 logger = structlog.get_logger()
@@ -66,7 +66,7 @@ def _save_declared_file(path: Path, data: dict[str, dict[str, str]]) -> None:
     atomic_write_json(path, data)
 
 
-def _detect_branch(cwd: str) -> str:
+def detect_branch(cwd: str) -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -157,7 +157,7 @@ def list_peers(
         if filter_cwd and not fnmatch(ws.cwd, filter_cwd):
             continue
 
-        branch = _detect_branch(ws.cwd) if ws.cwd else ""
+        branch = detect_branch(ws.cwd) if ws.cwd else ""
 
         peers.append(
             PeerInfo(

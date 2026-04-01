@@ -38,7 +38,7 @@ from .message_sender import (
 )
 from .recovery_callbacks import build_recovery_keyboard
 from .polling_strategies import clear_probe_failures
-from .topic_state_registry import topic_state
+from ..topic_state_registry import topic_state
 from .user_state import PENDING_THREAD_ID, PENDING_THREAD_TEXT, RECOVERY_WINDOW_ID
 from ..session import session_manager
 from ..thread_router import thread_router
