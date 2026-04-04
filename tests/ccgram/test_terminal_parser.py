@@ -637,7 +637,7 @@ class TestFindChromeBoundary:
     def test_content_separator_not_chrome(self):
         lines = [
             "─" * 30,
-            "x" * 100,
+            "x" * 260,
             "─" * 30,
             "❯",
         ]

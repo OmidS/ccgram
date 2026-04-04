@@ -152,7 +152,9 @@ _MIN_SEPARATOR_WIDTH = 20
 
 # Maximum length of a chrome line (prompt, status bar) between separators.
 # Lines longer than this are considered actual output content.
-_MAX_CHROME_LINE_LENGTH = 80
+# Set high enough to accommodate customized Claude Code status bars which
+# can span the full terminal width (200+ columns).
+_MAX_CHROME_LINE_LENGTH = 250
 
 
 def _shorten_separators(text: str) -> str:
