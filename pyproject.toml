@@ -19,17 +19,17 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "python-telegram-bot[rate-limiter]>=21.0",
-    "python-dotenv>=1.0.0",
-    "httpx>=0.27.0",
-    "libtmux>=0.50.0",
-    "Pillow>=10.0.0",
-    "telegramify-markdown>=1.0.0",
-    "aiofiles>=24.0.0",
-    "structlog>=24.0.0",
-    "click>=8.1.0",
-    "pyte>=0.8.2",
-    "pathspec>=0.12",
+    "python-telegram-bot[rate-limiter]==22.7",
+    "python-dotenv==1.2.2",
+    "httpx==0.28.1",
+    "libtmux==0.55.1",
+    "Pillow==12.2.0",
+    "telegramify-markdown==1.1.2",
+    "aiofiles==25.1.0",
+    "structlog==25.5.0",
+    "click==8.3.2",
+    "pyte==0.8.2",
+    "pathspec==1.0.4",
 ]
 
 [project.urls]
